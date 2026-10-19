@@ -50,8 +50,10 @@ async def test_end_to_end_api_lifecycle():
         )
         assert exec_resp.status_code == 200
         exec_res = exec_resp.json()
-        assert exec_res["state"] == "PAID"
-        assert exec_res["paypal_order_id"] is not None
+        # Response is now wrapped: {session: {...}, paypal_mode: "mock"|"live_sandbox", ...}
+        session_data = exec_res.get("session", exec_res)  # handle both old and new format
+        assert session_data["state"] == "PAID"
+        assert session_data["paypal_order_id"] is not None
 
         # 5. Check audit events
         audit_resp = await client.get("/api/audit/events")

@@ -1,10 +1,15 @@
+"""APIL FastAPI application entry point.
+
+IMPORTANT: app.config must be imported FIRST so that .env credentials are loaded
+into os.environ before app.api.routers instantiates the TransactionCoordinator
+(and its PayPalClient) at module level.
+"""
+import app.config  # noqa: F401 — side-effect: loads .env with override=True
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from dotenv import load_dotenv
 
 from app.api.routers import router
-
-load_dotenv()
 
 app = FastAPI(
     title="Agent Payment Integrity Layer (APIL) API",

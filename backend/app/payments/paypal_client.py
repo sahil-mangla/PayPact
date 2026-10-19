@@ -141,19 +141,36 @@ class PayPalClient:
             "PayPal-Request-Id": req_id,
         }
 
-        # Build PayPal v2 Order Payload
-        items_payload = [
-            {
+        # PayPal REST API supported currencies: USD, EUR, GBP, CAD, AUD, etc.
+        # INR is not supported by PayPal REST Orders API. For INR or unsupported currencies,
+        # convert to USD so PayPal Orders API accepts the order and matches frontend PayPal JS SDK.
+        paypal_currency = proposal.currency
+        conv_rate = 1.0
+        supported_currencies = {"USD", "EUR", "GBP", "CAD", "AUD", "SGD", "JPY", "CHF", "NZD", "HKD"}
+        if paypal_currency not in supported_currencies:
+            paypal_currency = "USD"
+            conv_rate = 1.0 / 83.0 if proposal.currency == "INR" else 1.0
+
+        # Build PayPal v2 Order Payload with strict breakdown arithmetic
+        items_payload = []
+        item_total_sum = 0.0
+        for item in proposal.items:
+            unit_val = round(item.unit_price * conv_rate, 2)
+            item_total_sum += round(unit_val * item.quantity, 2)
+            items_payload.append({
                 "name": item.name[:127],
                 "sku": item.sku[:127],
                 "quantity": str(item.quantity),
                 "unit_amount": {
-                    "currency_code": proposal.currency,
-                    "value": f"{item.unit_price:.2f}",
+                    "currency_code": paypal_currency,
+                    "value": f"{unit_val:.2f}",
                 },
-            }
-            for item in proposal.items
-        ]
+            })
+
+        item_total_sum = round(item_total_sum, 2)
+        shipping_val = round(proposal.shipping_fee * conv_rate, 2)
+        tax_val = round(proposal.tax_fee * conv_rate, 2)
+        total_val = round(item_total_sum + shipping_val + tax_val, 2)
 
         payload = {
             "intent": "CAPTURE",
@@ -163,20 +180,20 @@ class PayPalClient:
                     "description": f"Purchase proposal {proposal.proposal_id}",
                     "custom_id": proposal.proposal_fingerprint or "",
                     "amount": {
-                        "currency_code": proposal.currency,
-                        "value": f"{proposal.total_amount:.2f}",
+                        "currency_code": paypal_currency,
+                        "value": f"{total_val:.2f}",
                         "breakdown": {
                             "item_total": {
-                                "currency_code": proposal.currency,
-                                "value": f"{proposal.item_subtotal:.2f}",
+                                "currency_code": paypal_currency,
+                                "value": f"{item_total_sum:.2f}",
                             },
                             "shipping": {
-                                "currency_code": proposal.currency,
-                                "value": f"{proposal.shipping_fee:.2f}",
+                                "currency_code": paypal_currency,
+                                "value": f"{shipping_val:.2f}",
                             },
                             "tax_total": {
-                                "currency_code": proposal.currency,
-                                "value": f"{proposal.tax_fee:.2f}",
+                                "currency_code": paypal_currency,
+                                "value": f"{tax_val:.2f}",
                             },
                         },
                     },
@@ -196,7 +213,17 @@ class PayPalClient:
                 headers=headers,
                 json=payload,
             )
-            resp.raise_for_status()
+            if resp.status_code >= 400:
+                try:
+                    err_json = resp.json()
+                    err_msg = (
+                        err_json.get("message")
+                        or (err_json.get("details", [{}])[0].get("description"))
+                        or resp.text
+                    )
+                except Exception:
+                    err_msg = resp.text
+                raise RuntimeError(f"PayPal order creation rejected ({resp.status_code}): {err_msg}")
             data = resp.json()
 
         return PayPalOrderResponse(
@@ -251,7 +278,17 @@ class PayPalClient:
                 f"{self.base_url}/v2/checkout/orders/{order_id}/capture",
                 headers=headers,
             )
-            resp.raise_for_status()
+            if resp.status_code >= 400:
+                try:
+                    err_json = resp.json()
+                    err_msg = (
+                        err_json.get("message")
+                        or (err_json.get("details", [{}])[0].get("description"))
+                        or resp.text
+                    )
+                except Exception:
+                    err_msg = resp.text
+                raise RuntimeError(f"PayPal capture rejected ({resp.status_code}): {err_msg}")
             data = resp.json()
 
         # Extract capture id from purchase_units

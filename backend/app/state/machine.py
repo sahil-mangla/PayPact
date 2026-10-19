@@ -291,6 +291,124 @@ class TransactionCoordinator:
 
             return session
 
+    async def create_paypal_order_only(
+        self,
+        checkout_id: str,
+        current_proposal_state: Optional[PurchaseProposal] = None,
+        simulate_timeout: bool = False,
+    ) -> CheckoutSession:
+        """Live sandbox phase-1: Run pre-execution gate + create PayPal order.
+        Does NOT capture — buyer must approve via JS SDK popup first."""
+        session = self._sessions.get(checkout_id)
+        if not session:
+            raise ValueError(f"Checkout '{checkout_id}' not found.")
+
+        if checkout_id not in self._execution_locks:
+            self._execution_locks[checkout_id] = asyncio.Lock()
+
+        async with self._execution_locks[checkout_id]:
+            if session.state == TransactionState.PAID:
+                return session
+
+            if session.state != TransactionState.AUTHORIZED:
+                raise ValueError(f"Cannot execute checkout in state '{session.state}'. Must be AUTHORIZED.")
+
+            policy = self._policies.get(session.policy_id)
+            if not policy:
+                session.state = TransactionState.FAILED
+                session.failure_reason = "Policy not found during pre-execution."
+                return session
+
+            live_proposal = current_proposal_state or session.proposal
+
+            # Pre-execution invariant gate
+            reval = DeterministicPolicyEngine.revalidate_pre_execution(
+                proposal=live_proposal,
+                policy=policy,
+                approved_fingerprint=session.approved_fingerprint,
+            )
+
+            if reval.decision != PolicyDecisionType.ALLOW:
+                session.state = TransactionState.POLICY_REJECTED
+                session.failure_reason = reval.primary_reason
+                self.audit_ledger.record_event(
+                    event_type="PRE_EXECUTION_BLOCKED",
+                    checkout_id=checkout_id,
+                    policy_version=policy.version,
+                    proposal_fingerprint=reval.proposal_fingerprint,
+                    decision=reval.decision.value,
+                    reason=reval.primary_reason,
+                )
+                return session
+
+            # Create PayPal order (no capture yet)
+            req_id = session.idempotency_key
+            try:
+                order_resp: PayPalOrderResponse = await self.paypal_client.create_order(
+                    proposal=live_proposal,
+                    request_id=req_id,
+                )
+                session.paypal_order_id = order_resp.order_id
+                session.state = TransactionState.CHECKOUT_CREATED
+                self.audit_ledger.record_event(
+                    event_type="CHECKOUT_CREATED",
+                    checkout_id=checkout_id,
+                    policy_version=policy.version,
+                    proposal_fingerprint=live_proposal.proposal_fingerprint,
+                    reason=f"PayPal order created: {order_resp.order_id} — awaiting buyer approval",
+                )
+            except Exception as e:
+                session.state = TransactionState.FAILED
+                session.failure_reason = f"PayPal create order failed: {str(e)}"
+
+            return session
+
+    async def capture_approved_order(
+        self,
+        checkout_id: str,
+        paypal_order_id: str,
+    ) -> CheckoutSession:
+        """Live sandbox phase-2: Capture after buyer approved via PayPal JS SDK popup."""
+        session = self._sessions.get(checkout_id)
+        if not session:
+            raise ValueError(f"Checkout '{checkout_id}' not found.")
+
+        # Validate order ID matches what we created
+        if session.paypal_order_id and session.paypal_order_id != paypal_order_id:
+            raise ValueError(
+                f"Order ID mismatch: expected '{session.paypal_order_id}', got '{paypal_order_id}'. "
+                "Potential tampering detected."
+            )
+
+        if checkout_id not in self._execution_locks:
+            self._execution_locks[checkout_id] = asyncio.Lock()
+
+        async with self._execution_locks[checkout_id]:
+            if session.state == TransactionState.PAID:
+                return session
+
+            try:
+                capture_resp: PayPalOrderResponse = await self.paypal_client.capture_order(
+                    order_id=paypal_order_id,
+                    request_id=f"{session.idempotency_key}_cap",
+                )
+                if capture_resp.status == "COMPLETED":
+                    session.state = TransactionState.PAID
+                    session.paypal_capture_id = capture_resp.capture_id
+                    self.audit_ledger.record_event(
+                        event_type="PAYMENT_COMPLETED",
+                        checkout_id=checkout_id,
+                        reason=f"Live sandbox capture successful. Capture ID: {capture_resp.capture_id}",
+                    )
+                else:
+                    session.state = TransactionState.FAILED
+                    session.failure_reason = f"PayPal returned unexpected status: {capture_resp.status}"
+            except Exception as e:
+                session.state = TransactionState.RECONCILIATION_REQUIRED
+                session.failure_reason = f"PayPal capture error: {str(e)}"
+
+            return session
+
     async def reconcile_timeout(self, checkout_id: str) -> CheckoutSession:
         """Reconcile ambiguous timeout with PayPal."""
         session = self._sessions.get(checkout_id)

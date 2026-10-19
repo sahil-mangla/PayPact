@@ -52,6 +52,11 @@ class ExecutePaymentRequest(BaseModel):
     drift_sku: Optional[str] = None
 
 
+class CapturePaymentRequest(BaseModel):
+    """Request to capture an already-approved PayPal order (used with PayPal JS SDK flow)."""
+    paypal_order_id: str = Field(..., description="The PayPal Order ID to capture (returned by createOrder callback)")
+
+
 class LabRunRequest(BaseModel):
     scenario_id: Optional[str] = None
     system_type: str = Field(default="PROPOSED_APIL")  # BASELINE_A, BASELINE_B, PROPOSED_APIL
@@ -62,10 +67,12 @@ class LabRunRequest(BaseModel):
 # ----------------------------------------------------
 @router.get("/health")
 async def health_check():
+    is_mock = coordinator.paypal_client.mock_mode
     return {
         "status": "healthy",
         "service": "Agent Payment Integrity Layer (APIL)",
-        "paypal_mode": "mock" if coordinator.paypal_client.mock_mode else "live_sandbox",
+        "paypal_mode": "mock" if is_mock else "live_sandbox",
+        "paypal_client_id": coordinator.paypal_client.client_id[:20] + "..." if not is_mock else None,
     }
 
 
@@ -144,8 +151,16 @@ async def approve_checkout(checkout_id: str, req: ApproveProposalRequest):
         raise HTTPException(status_code=400, detail=str(e))
 
 
-@router.post("/checkouts/{checkout_id}/execute", response_model=CheckoutSession)
+@router.post("/checkouts/{checkout_id}/execute")
 async def execute_checkout(checkout_id: str, req: ExecutePaymentRequest):
+    """
+    Execute step 1: Runs pre-execution invariant gate, creates PayPal order.
+    
+    In LIVE SANDBOX mode: returns the PayPal approve URL for the JS SDK to open.
+    In MOCK mode: creates + captures inline and returns PAID state.
+    
+    For drift/rejection scenarios, blocks immediately without creating an order.
+    """
     session = coordinator.get_session(checkout_id)
     if not session:
         raise HTTPException(status_code=404, detail=f"Checkout '{checkout_id}' not found.")
@@ -163,13 +178,72 @@ async def execute_checkout(checkout_id: str, req: ExecutePaymentRequest):
 
     sim_timeout = (req.simulate_drift_type == "timeout")
 
+    is_mock = coordinator.paypal_client.mock_mode
+
     try:
-        updated_session = await coordinator.execute_payment(
+        if is_mock:
+            # Mock mode: full inline create + capture (original behavior)
+            updated_session = await coordinator.execute_payment(
+                checkout_id=checkout_id,
+                current_proposal_state=live_proposal if req.simulate_drift_type else None,
+                simulate_timeout=sim_timeout,
+            )
+            return {
+                "session": updated_session,
+                "paypal_mode": "mock",
+                "needs_buyer_approval": False,
+                "approve_url": None,
+            }
+        else:
+            # Live sandbox: run policy gate + create order only, return approve URL
+            updated_session = await coordinator.create_paypal_order_only(
+                checkout_id=checkout_id,
+                current_proposal_state=live_proposal if req.simulate_drift_type else None,
+                simulate_timeout=sim_timeout,
+            )
+
+            # If blocked by policy, return immediately
+            if updated_session.state.value in ("POLICY_REJECTED", "FAILED"):
+                return {
+                    "session": updated_session,
+                    "paypal_mode": "live_sandbox",
+                    "needs_buyer_approval": False,
+                    "approve_url": None,
+                }
+
+            # Find the approve URL from the PayPal order
+            approve_url = None
+            if updated_session.paypal_order_id:
+                # PayPal JS SDK flow: use orderID directly, no redirect needed
+                approve_url = f"https://www.sandbox.paypal.com/checkoutnow?token={updated_session.paypal_order_id}"
+
+            return {
+                "session": updated_session,
+                "paypal_mode": "live_sandbox",
+                "needs_buyer_approval": True,
+                "paypal_order_id": updated_session.paypal_order_id,
+                "approve_url": approve_url,
+            }
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post("/checkouts/{checkout_id}/capture")
+async def capture_checkout(checkout_id: str, req: CapturePaymentRequest):
+    """
+    Execute step 2 (live sandbox only): Called by PayPal JS SDK onApprove callback.
+    Captures the PayPal order after the buyer has approved it in the PayPal popup.
+    """
+    session = coordinator.get_session(checkout_id)
+    if not session:
+        raise HTTPException(status_code=404, detail=f"Checkout '{checkout_id}' not found.")
+
+    try:
+        updated_session = await coordinator.capture_approved_order(
             checkout_id=checkout_id,
-            current_proposal_state=live_proposal if req.simulate_drift_type else None,
-            simulate_timeout=sim_timeout,
+            paypal_order_id=req.paypal_order_id,
         )
-        return updated_session
+        return {"session": updated_session, "paypal_mode": "live_sandbox"}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
