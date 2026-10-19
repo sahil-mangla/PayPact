@@ -32,10 +32,10 @@
   --status-reject-bg: #fef2f2;
   --status-reject-border: #fecaca;
 
-  --radius-sm: 6px;
-  --radius-md: 10px;
-  --radius-lg: 14px;
-  --radius-xl: 20px;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-xl: 24px;
 }
 
 * {
@@ -64,6 +64,26 @@ code, pre, .font-mono {
   font-family: 'JetBrains Mono', monospace;
 }
 
+/* Floating Pill Navigation (Aceternity SaaS Style) */
+.floating-pill-nav {
+  position: sticky;
+  top: 14px;
+  z-index: 50;
+  max-width: 1240px;
+  margin: 0 auto 24px;
+  background: rgba(255, 255, 255, 0.9);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+  border: 1px solid rgba(226, 232, 240, 0.85);
+  border-radius: 9999px;
+  box-shadow: 0 4px 20px -2px rgba(15, 23, 42, 0.06), 0 2px 6px -1px rgba(15, 23, 42, 0.03);
+  padding: 8px 18px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
 /* Professional White Card Surface */
 .clean-card {
   background: #ffffff;
@@ -75,7 +95,7 @@ code, pre, .font-mono {
 
 .clean-card:hover {
   border-color: var(--border-medium);
-  box-shadow: 0 4px 12px -2px rgba(15, 23, 42, 0.06), 0 2px 4px -2px rgba(15, 23, 42, 0.04);
+  box-shadow: 0 6px 16px -3px rgba(15, 23, 42, 0.06), 0 2px 4px -2px rgba(15, 23, 42, 0.04);
 }
 
 /* Status Badges */
@@ -83,9 +103,9 @@ code, pre, .font-mono {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  padding: 3px 9px;
+  padding: 4px 10px;
   border-radius: 9999px;
-  font-size: 0.73rem;
+  font-size: 0.74rem;
   font-weight: 600;
   white-space: nowrap;
 }
@@ -126,8 +146,8 @@ code, pre, .font-mono {
   align-items: center;
   justify-content: center;
   gap: 7px;
-  padding: 9px 16px;
-  border-radius: var(--radius-md);
+  padding: 9px 18px;
+  border-radius: 9999px;
   font-size: 0.85rem;
   font-weight: 600;
   cursor: pointer;
@@ -141,13 +161,14 @@ code, pre, .font-mono {
   background: var(--accent-blue);
   color: #ffffff;
   border-color: var(--accent-blue);
-  box-shadow: 0 1px 2px 0 rgba(0, 112, 186, 0.2);
+  box-shadow: 0 2px 6px 0 rgba(0, 112, 186, 0.25);
 }
 
 .btn-primary:hover:not(:disabled) {
   background: var(--accent-blue-hover);
   border-color: var(--accent-blue-hover);
-  box-shadow: 0 2px 6px 0 rgba(0, 112, 186, 0.3);
+  box-shadow: 0 4px 10px 0 rgba(0, 112, 186, 0.35);
+  transform: translateY(-1px);
 }
 
 .btn-secondary {
@@ -160,6 +181,7 @@ code, pre, .font-mono {
 .btn-secondary:hover:not(:disabled) {
   background: #f8fafc;
   border-color: var(--border-medium);
+  transform: translateY(-1px);
 }
 
 .btn-danger {
@@ -171,11 +193,44 @@ code, pre, .font-mono {
 .btn-danger:hover:not(:disabled) {
   background: #fee2e2;
   border-color: #fca5a5;
+  transform: translateY(-1px);
 }
 
 .btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+  transform: none !important;
+}
+
+/* Pill Tab Container */
+.pill-tab-container {
+  display: flex;
+  background: #f1f5f9;
+  padding: 4px;
+  border-radius: 9999px;
+  position: relative;
+  gap: 2px;
+}
+
+.pill-tab-btn {
+  position: relative;
+  padding: 7px 16px;
+  border-radius: 9999px;
+  font-size: 0.82rem;
+  font-weight: 600;
+  cursor: pointer;
+  border: none;
+  background: transparent;
+  color: #64748b;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  transition: color 0.15s ease;
+  z-index: 1;
+}
+
+.pill-tab-btn.active {
+  color: #0f172a;
 }
 
 /* Code Snippet Box */
@@ -183,7 +238,7 @@ code, pre, .font-mono {
   background: #f8fafc;
   border: 1px solid #e2e8f0;
   border-radius: var(--radius-sm);
-  padding: 10px 14px;
+  padding: 12px 14px;
   font-family: 'JetBrains Mono', monospace;
   font-size: 0.75rem;
   color: #334155;
@@ -194,23 +249,14 @@ code, pre, .font-mono {
 .modal-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(15, 23, 42, 0.5);
-  backdrop-filter: blur(4px);
+  background: rgba(15, 23, 42, 0.45);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
   z-index: 100;
   display: flex;
   align-items: center;
   justify-content: center;
   padding: 20px;
-}
-
-/* Simple animation */
-@keyframes fadeIn {
-  from { opacity: 0; transform: translateY(4px); }
-  to { opacity: 1; transform: translateY(0); }
-}
-
-.animate-fade-in {
-  animation: fadeIn 0.2s ease-out forwards;
 }
 
 /* Custom Clean Scrollbars */
