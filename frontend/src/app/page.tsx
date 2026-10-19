@@ -876,7 +876,15 @@ export default function Home() {
                       <ShoppingBag size={18} color="#0070ba" />
                       <h3 style={{ fontSize: '1.05rem', fontWeight: 700, color: '#0f172a' }}>AI Purchase Goal</h3>
                     </div>
-                    <span className="badge badge-neutral">Autonomous Purchase</span>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      {healthStatus?.ollama?.available && (
+                        <span className="badge badge-neutral" style={{ fontSize: '0.68rem', display: 'flex', alignItems: 'center', gap: '5px', background: '#f8fafc', color: '#0f172a', border: '1px solid #e2e8f0', padding: '3px 8px' }}>
+                          <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#10b981' }} />
+                          Ollama: {healthStatus.ollama.model}
+                        </span>
+                      )}
+                      <span className="badge badge-neutral">Autonomous Purchase</span>
+                    </div>
                   </div>
 
                   {/* Multi-Agent Swarm Pill Selector */}

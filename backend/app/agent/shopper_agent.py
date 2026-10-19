@@ -28,47 +28,80 @@ class ShopperAgent:
         """Parse natural language request into confirmed policy draft.
         
         Extracts budget limits, currency, and product categories.
-        Uses deterministic heuristic extraction with support for ₹, $, INR, USD.
+        Attempts local Ollama LLM extraction first (e.g. qwen2.5-coder:7b),
+        with seamless deterministic fallback.
         """
-        prompt_lower = user_prompt.lower()
-
-        # Extract currency
-        currency = "INR"
-        if "$" in user_prompt or "usd" in prompt_lower:
-            currency = "USD"
-        elif "₹" in user_prompt or "inr" in prompt_lower or "rs" in prompt_lower:
-            currency = "INR"
-
-        # Extract numerical limits (budget and auto-threshold)
-        numbers = re.findall(r"(?:₹|\$|rs\.?|inr)?\s*([0-9]{1,3}(?:,[0-9]{3})*(?:\.[0-9]{2})?|[0-9]+)", prompt_lower)
-        clean_nums = []
-        for n in numbers:
-            try:
-                clean_nums.append(float(n.replace(",", "")))
-            except ValueError:
-                continue
-
-        # Sensible defaults if not specified
+        category = "mechanical keyboard"
         max_total = 5000.00
         auto_limit = 4000.00
+        currency = "INR"
 
-        if len(clean_nums) >= 2:
-            # Usually highest is max budget, lower is auto limit
-            s = sorted(clean_nums)
-            auto_limit = s[-2]
-            max_total = s[-1]
-        elif len(clean_nums) == 1:
-            max_total = clean_nums[0]
-            auto_limit = round(max_total * 0.8, 2)
+        # 1. Attempt local Ollama inference
+        try:
+            from app.agent.ollama_client import OllamaClient
+            ollama_data = OllamaClient.parse_intent(user_prompt)
+        except Exception:
+            ollama_data = None
 
-        # Detect category
-        category = "mechanical keyboard"
-        if "keyboard" in prompt_lower:
-            category = "mechanical keyboard"
-        elif "mouse" in prompt_lower:
-            category = "computer mouse"
-        elif "monitor" in prompt_lower:
-            category = "computer monitor"
+        if ollama_data and isinstance(ollama_data, dict):
+            if "category" in ollama_data and ollama_data["category"]:
+                cat_str = str(ollama_data["category"]).lower()
+                if "keyboard" in cat_str:
+                    category = "mechanical keyboard"
+                elif "mouse" in cat_str:
+                    category = "computer mouse"
+                elif "monitor" in cat_str:
+                    category = "computer monitor"
+                else:
+                    category = cat_str
+            if "max_budget" in ollama_data and isinstance(ollama_data["max_budget"], (int, float)):
+                parsed_max = float(ollama_data["max_budget"])
+                if parsed_max > 0:
+                    max_total = parsed_max
+            if "auto_buy_limit" in ollama_data and isinstance(ollama_data["auto_buy_limit"], (int, float)):
+                parsed_auto = float(ollama_data["auto_buy_limit"])
+                if parsed_auto > 0:
+                    auto_limit = min(parsed_auto, max_total)
+                else:
+                    auto_limit = round(max_total * 0.8, 2)
+            else:
+                auto_limit = round(max_total * 0.8, 2)
+            if "currency" in ollama_data and str(ollama_data["currency"]).upper() in ["INR", "USD"]:
+                currency = str(ollama_data["currency"]).upper()
+        else:
+            # 2. Resilient heuristic fallback
+            prompt_lower = user_prompt.lower()
+
+            # Extract currency
+            if "$" in user_prompt or "usd" in prompt_lower:
+                currency = "USD"
+            elif "₹" in user_prompt or "inr" in prompt_lower or "rs" in prompt_lower:
+                currency = "INR"
+
+            # Extract numerical limits (budget and auto-threshold)
+            numbers = re.findall(r"(?:₹|\$|rs\.?|inr)?\s*([0-9]{1,3}(?:,[0-9]{3})*(?:\.[0-9]{2})?|[0-9]+)", prompt_lower)
+            clean_nums = []
+            for n in numbers:
+                try:
+                    clean_nums.append(float(n.replace(",", "")))
+                except ValueError:
+                    continue
+
+            if len(clean_nums) >= 2:
+                s = sorted(clean_nums)
+                auto_limit = s[-2]
+                max_total = s[-1]
+            elif len(clean_nums) == 1:
+                max_total = clean_nums[0]
+                auto_limit = round(max_total * 0.8, 2)
+
+            # Detect category
+            if "keyboard" in prompt_lower:
+                category = "mechanical keyboard"
+            elif "mouse" in prompt_lower:
+                category = "computer mouse"
+            elif "monitor" in prompt_lower:
+                category = "computer monitor"
 
         # Default Swarm Hierarchy Allocation across specialized agent personas
         hw_quota = max_total
@@ -170,12 +203,36 @@ class ShopperAgent:
         # Attach computed canonical fingerprint
         proposal.proposal_fingerprint = compute_proposal_fingerprint(proposal)
 
-        return {
-            "recommendation_explanation": (
+        # Generate contextual recommendation rationale via local Ollama if available
+        explanation: str
+        try:
+            from app.agent.ollama_client import OllamaClient
+            ollama_rationale = OllamaClient.generate_recommendation_rationale(
+                user_prompt=user_prompt,
+                product_name=target_product.name,
+                product_merchant=target_product.merchant,
+                unit_price=target_product.unit_price,
+                currency=proposal.currency,
+                product_desc=target_product.description,
+            )
+            if ollama_rationale:
+                explanation = f"{ollama_rationale} [Inferred locally via Ollama qwen2.5-coder:7b]"
+            else:
+                explanation = (
+                    f"I recommend the '{target_product.name}' from {target_product.merchant}. "
+                    f"Unit price is {target_product.unit_price:.2f} {proposal.currency}. "
+                    f"{target_product.description}"
+                )
+        except Exception:
+            explanation = (
                 f"I recommend the '{target_product.name}' from {target_product.merchant}. "
                 f"Unit price is {target_product.unit_price:.2f} {proposal.currency}. "
                 f"{target_product.description}"
-            ),
+            )
+
+        return {
+            "recommendation_explanation": explanation,
             "proposal": proposal,
             "product": target_product,
         }
+

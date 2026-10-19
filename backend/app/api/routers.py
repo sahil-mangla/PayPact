@@ -81,12 +81,23 @@ class LabRunRequest(BaseModel):
 @router.get("/health")
 async def health_check():
     is_mock = coordinator.paypal_client.mock_mode
+    from app.agent.ollama_client import OllamaClient
+    ollama_info = OllamaClient.check_health()
     return {
         "status": "healthy",
         "service": "Agent Payment Integrity Layer (APIL)",
         "paypal_mode": "mock" if is_mock else "live_sandbox",
         "paypal_client_id": coordinator.paypal_client.client_id[:20] + "..." if not is_mock else None,
+        "ollama": ollama_info,
     }
+
+
+@router.get("/agent/model-status")
+async def get_agent_model_status():
+    """Return local Ollama AI model availability and active configuration."""
+    from app.agent.ollama_client import OllamaClient
+    return OllamaClient.check_health()
+
 
 
 @router.get("/catalogue", response_model=List[Product])
