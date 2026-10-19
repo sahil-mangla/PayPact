@@ -35,6 +35,7 @@ import {
 } from 'lucide-react';
 
 import { WordByWordText } from '../components/WordByWordText';
+import ParticleMorphOrb, { AiThinkingOrb, AiThinkingCard } from '../components/ui/ParticleMorphOrb';
 
 function getApiBaseUrl(): string {
   let url = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api';
@@ -753,7 +754,9 @@ export default function Home() {
             </div>
 
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
-              {pipelineBlocked ? (
+              {loading ? (
+                <AiThinkingOrb size="sm" text="AI Evaluating Policy..." />
+              ) : pipelineBlocked ? (
                 <span className="badge badge-reject" style={{ fontSize: '0.68rem', padding: '2px 8px' }}>Blocked by Rule</span>
               ) : (
                 <span className="badge badge-allow" style={{ fontSize: '0.68rem', padding: '2px 8px' }}>System Ready</span>
@@ -1044,10 +1047,19 @@ export default function Home() {
                       onClick={() => handleParsePolicy()}
                       disabled={loading || !prompt.trim()}
                       className="btn btn-primary"
-                      style={{ padding: '6px 16px', fontSize: '0.8rem' }}
+                      style={{ padding: '6px 16px', fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '6px' }}
                     >
-                      {loading ? <RefreshCw className="animate-spin" size={13} /> : <Play size={13} />}
-                      Generate Proposal & Check Rules
+                      {loading ? (
+                        <>
+                          <ParticleMorphOrb size={15} speed={1.8} />
+                          <span>Evaluating Invariants...</span>
+                        </>
+                      ) : (
+                        <>
+                          <Play size={13} />
+                          <span>Generate Proposal & Check Rules</span>
+                        </>
+                      )}
                     </motion.button>
                   </div>
                 </div>
@@ -1178,7 +1190,9 @@ export default function Home() {
 
               {/* ─── Right Column: Proposal & Checkout ─── */}
               <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                {!proposalRes ? (
+                {loading ? (
+                  <AiThinkingCard currentStage={pipelineStep} stageTitle="Evaluating Purchase Invariants & Policy" />
+                ) : !proposalRes ? (
                   <div className="clean-card" style={{ padding: '40px 18px', textAlign: 'center', color: '#64748b', minHeight: '380px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
                     <CreditCard size={36} strokeWidth={1.3} style={{ margin: '0 auto 10px', color: '#cbd5e1' }} />
                     <h3 style={{ fontSize: '0.96rem', color: '#0f172a', marginBottom: '4px' }}>No Proposal Generated Yet</h3>
@@ -1478,7 +1492,14 @@ export default function Home() {
                     Automated testing across 7 real-world failure and attack scenarios
                   </p>
                 </div>
-                <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
+                  {labRunning && (
+                    <AiThinkingOrb
+                      size="sm"
+                      text="Evaluating 7 Invariant Scenarios..."
+                      subtext="Testing price drift & prompt injection resilience"
+                    />
+                  )}
                   <select
                     value={selectedSystem}
                     onChange={(e) => setSelectedSystem(e.target.value as any)}
@@ -1494,10 +1515,19 @@ export default function Home() {
                     onClick={handleRunBenchmark}
                     disabled={labRunning}
                     className="btn btn-primary"
-                    style={{ padding: '6px 14px', fontSize: '0.78rem' }}
+                    style={{ padding: '6px 14px', fontSize: '0.78rem', display: 'flex', alignItems: 'center', gap: '6px' }}
                   >
-                    {labRunning ? <RefreshCw className="animate-spin" size={14} /> : <Play size={14} />}
-                    {labRunning ? 'Running Tests...' : 'Run All 7 Scenarios'}
+                    {labRunning ? (
+                      <>
+                        <ParticleMorphOrb size={14} speed={2.0} />
+                        <span>Evaluating...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Play size={14} />
+                        <span>Run All 7 Scenarios</span>
+                      </>
+                    )}
                   </motion.button>
                 </div>
               </div>
@@ -1761,11 +1791,12 @@ export default function Home() {
                     }}
                   >
                     {verifierStatus === 'verifying' && (
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#0070ba' }}>
-                        <RefreshCw size={15} className="animate-spin" />
-                        <span style={{ fontSize: '0.8rem', fontWeight: 600 }}>
-                          Computing canonical digest and evaluating HMAC-SHA256 signature...
-                        </span>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '6px 0' }}>
+                        <AiThinkingOrb
+                          size="md"
+                          text="Evaluating Cryptographic HMAC-SHA256 Signature..."
+                          subtext="Verifying canonical hash & non-repudiation ledger integrity"
+                        />
                       </div>
                     )}
 
@@ -1981,12 +2012,9 @@ export default function Home() {
                       </div>
                     </>
                   ) : receiptVerificationState === 'verifying' ? (
-                    <>
-                      <RefreshCw size={20} className="animate-spin" color="#0070ba" />
-                      <div style={{ fontSize: '0.86rem', color: '#0070ba' }}>
-                        Checking signature against secret key...
-                      </div>
-                    </>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: '100%', padding: '4px 0' }}>
+                      <AiThinkingOrb size="sm" text="Evaluating Cryptographic Signature..." />
+                    </div>
                   ) : (
                     <>
                       <ShieldAlert size={22} color="#dc2626" />
