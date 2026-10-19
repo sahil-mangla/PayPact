@@ -1,15 +1,17 @@
 import asyncio
 import uuid
-from typing import Dict, Optional
+from typing import Any, Dict, Optional
 from pydantic import BaseModel, Field
 
 from app.audit.ledger import AuditLedger
+from app.crypto.receipts import generate_signed_receipt
 from app.fingerprint.canonical import compute_proposal_fingerprint
 from app.models.schemas import (
     ApprovalRecord,
     AuthorizationPolicy,
     PolicyDecisionType,
     PurchaseProposal,
+    SignedAuditReceipt,
     TransactionState,
 )
 from app.payments.paypal_client import PayPalClient, PayPalOrderResponse
@@ -275,6 +277,11 @@ class TransactionCoordinator:
                 if capture_resp.status == "COMPLETED":
                     session.state = TransactionState.PAID
                     session.paypal_capture_id = capture_resp.capture_id
+                    self._record_spend(
+                        policy_id=session.policy_id,
+                        amount=live_proposal.total_amount,
+                        agent_id=live_proposal.agent_id,
+                    )
                     self.audit_ledger.record_event(
                         event_type="PAYMENT_COMPLETED",
                         checkout_id=checkout_id,
@@ -395,6 +402,11 @@ class TransactionCoordinator:
                 if capture_resp.status == "COMPLETED":
                     session.state = TransactionState.PAID
                     session.paypal_capture_id = capture_resp.capture_id
+                    self._record_spend(
+                        policy_id=session.policy_id,
+                        amount=session.proposal.total_amount,
+                        agent_id=session.proposal.agent_id,
+                    )
                     self.audit_ledger.record_event(
                         event_type="PAYMENT_COMPLETED",
                         checkout_id=checkout_id,
@@ -439,3 +451,89 @@ class TransactionCoordinator:
 
     def get_session(self, checkout_id: str) -> Optional[CheckoutSession]:
         return self._sessions.get(checkout_id)
+
+    def _record_spend(self, policy_id: str, amount: float, agent_id: Optional[str] = None):
+        """Atomically record captured spend against master policy and agent quota."""
+        policy = self._policies.get(policy_id)
+        if policy:
+            policy.spent_total = round(policy.spent_total + amount, 2)
+            if agent_id and policy.agent_quotas and agent_id in policy.agent_quotas:
+                quota = policy.agent_quotas[agent_id]
+                quota.spent_budget = round(quota.spent_budget + amount, 2)
+
+    def _record_refund(self, policy_id: str, amount: float, agent_id: Optional[str] = None):
+        """Atomically credit back spend on refund or merchant reversal."""
+        policy = self._policies.get(policy_id)
+        if policy:
+            policy.spent_total = round(max(0.0, policy.spent_total - amount), 2)
+            if agent_id and policy.agent_quotas and agent_id in policy.agent_quotas:
+                quota = policy.agent_quotas[agent_id]
+                quota.spent_budget = round(max(0.0, quota.spent_budget - amount), 2)
+
+    async def process_webhook_event(
+        self,
+        event_type: str,
+        resource: Dict[str, Any],
+        checkout_id: Optional[str] = None,
+        summary: Optional[str] = None,
+    ) -> Optional[CheckoutSession]:
+        """Process asynchronous PayPal webhook events (refunds, disputes, reversals)."""
+        target_checkout_id = checkout_id
+        if not target_checkout_id:
+            order_id = resource.get("id") or resource.get("order_id")
+            for chk_id, sess in self._sessions.items():
+                if sess.paypal_order_id == order_id or sess.paypal_capture_id == order_id:
+                    target_checkout_id = chk_id
+                    break
+
+        if not target_checkout_id or target_checkout_id not in self._sessions:
+            return None
+
+        session = self._sessions[target_checkout_id]
+        policy = self._policies.get(session.policy_id)
+
+        if event_type in ("PAYMENT.CAPTURE.REFUNDED", "PAYMENT.SALE.REFUNDED"):
+            session.state = TransactionState.REFUNDED
+            amount_val = float(resource.get("amount", {}).get("value", session.proposal.total_amount))
+            self._record_refund(
+                policy_id=session.policy_id,
+                amount=amount_val,
+                agent_id=session.proposal.agent_id,
+            )
+            self.audit_ledger.record_event(
+                event_type="PAYMENT_REFUNDED",
+                checkout_id=target_checkout_id,
+                policy_version=policy.version if policy else None,
+                reason=summary or f"Payment refunded for checkout {target_checkout_id}: {amount_val}",
+            )
+        elif event_type in ("CUSTOMER.DISPUTE.CREATED", "PAYMENT.CAPTURE.REVERSED"):
+            session.state = TransactionState.DISPUTED
+            self.audit_ledger.record_event(
+                event_type="PAYMENT_DISPUTED",
+                checkout_id=target_checkout_id,
+                policy_version=policy.version if policy else None,
+                reason=summary or f"Payment disputed via PayPal webhook: {event_type}",
+            )
+        return session
+
+    def generate_audit_receipt(self, checkout_id: str) -> SignedAuditReceipt:
+        """Generate tamper-evident, digitally signed audit receipt for a checkout session."""
+        session = self._sessions.get(checkout_id)
+        if not session:
+            raise ValueError(f"Checkout '{checkout_id}' not found.")
+
+        return generate_signed_receipt(
+            checkout_id=checkout_id,
+            decision="ALLOW" if session.state == TransactionState.PAID else "REJECT_OR_BLOCKED",
+            status=session.state.value,
+            policy_id=session.policy_id,
+            policy_version=session.policy_version,
+            proposal_fingerprint=session.proposal.proposal_fingerprint or "",
+            total_amount=session.proposal.total_amount,
+            currency=session.proposal.currency,
+            merchant=session.proposal.merchant,
+            items_count=len(session.proposal.items),
+            agent_id=session.proposal.agent_id,
+            paypal_order_id=session.paypal_order_id,
+            paypal_capture_id=session.paypal_capture_id,
+        )

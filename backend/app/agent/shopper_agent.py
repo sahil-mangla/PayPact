@@ -5,6 +5,7 @@ from typing import Dict, Any, Optional
 from app.catalogue.products import Product, get_product_by_sku, search_catalogue
 from app.fingerprint.canonical import compute_proposal_fingerprint
 from app.models.schemas import (
+    AgentQuota,
     AuthorizationPolicy,
     LineItem,
     PurchaseProposal,
@@ -69,17 +70,47 @@ class ShopperAgent:
         elif "monitor" in prompt_lower:
             category = "computer monitor"
 
+        # Default Swarm Hierarchy Allocation across specialized agent personas
+        hw_quota = max_total
+        tr_quota = round(max_total * 0.50, 2)
+        su_quota = round(max_total * 0.30, 2)
+        quotas = {
+            "agent_hardware": AgentQuota(
+                agent_id="agent_hardware",
+                agent_name="Hardware Procurement Agent",
+                role="Hardware & Tech Accessories",
+                allocated_budget=hw_quota,
+                spent_budget=0.0,
+            ),
+            "agent_travel": AgentQuota(
+                agent_id="agent_travel",
+                agent_name="Travel & Bookings Agent",
+                role="Flights, Hotels & Transit",
+                allocated_budget=tr_quota,
+                spent_budget=0.0,
+            ),
+            "agent_supplies": AgentQuota(
+                agent_id="agent_supplies",
+                agent_name="Office Supplies Agent",
+                role="Desk Accessories & Peripherals",
+                allocated_budget=su_quota,
+                spent_budget=0.0,
+            ),
+        }
+
         return AuthorizationPolicy(
             policy_id=f"pol_{uuid.uuid4().hex[:8]}",
             version=1,
             user_id=user_id,
             product_category=category,
             maximum_total=max_total,
+            spent_total=0.0,
             automatic_purchase_limit=auto_limit,
             allowed_currencies=[currency, "USD" if currency == "INR" else "INR"],
             allowed_merchants=["Keychron India", "Meckeys"],
             require_approval_above_limit=True,
             is_revoked=False,
+            agent_quotas=quotas,
         )
 
     @classmethod
@@ -88,6 +119,7 @@ class ShopperAgent:
         user_prompt: str,
         policy: AuthorizationPolicy,
         preferred_sku: Optional[str] = None,
+        agent_id: Optional[str] = "agent_hardware",
     ) -> Dict[str, Any]:
         """Propose a product matching user intent within authorized category."""
         target_product: Optional[Product] = None
@@ -125,6 +157,7 @@ class ShopperAgent:
             proposal_id=f"prop_{uuid.uuid4().hex[:8]}",
             policy_id=policy.policy_id,
             policy_version=policy.version,
+            agent_id=agent_id or "agent_hardware",
             merchant=target_product.merchant,
             items=[line_item],
             item_subtotal=item_subtotal,

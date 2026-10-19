@@ -24,6 +24,7 @@ build/
 out/
 build/
 dist/
+*.tsbuildinfo
 
 # Environment variables & secrets (CRITICAL: never commit credentials)
 .env

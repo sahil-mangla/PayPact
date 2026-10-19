@@ -32,6 +32,9 @@ import {
   ArrowRight,
   AlertCircle,
   Eye,
+  Bot,
+  Download,
+  RotateCcw,
 } from 'lucide-react';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api';
@@ -148,6 +151,10 @@ export default function Home() {
   const [simulateDrift, setSimulateDrift] = useState<'none' | 'price_drift' | 'sku_substitution'>('none');
   const [driftAnimating, setDriftAnimating] = useState(false);
 
+  // Swarm & Webhook state
+  const [selectedAgent, setSelectedAgent] = useState<'agent_hardware' | 'agent_travel' | 'agent_supplies'>('agent_hardware');
+  const [webhookStatus, setWebhookStatus] = useState<string | null>(null);
+
   // Lab State
   const [labScenarios, setLabScenarios] = useState<any[]>([]);
   const [selectedSystem, setSelectedSystem] = useState<'PROPOSED_APIL' | 'BASELINE_A' | 'BASELINE_B'>('PROPOSED_APIL');
@@ -245,12 +252,13 @@ export default function Home() {
     }
   };
 
-  const handleGenerateProposal = async (policyId: string) => {
+  const handleGenerateProposal = async (policyId: string, agentOverride?: string) => {
     try {
+      const activeAgent = agentOverride || selectedAgent;
       const propRes = await fetch(`${API_BASE}/proposals`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt, policy_id: policyId }),
+        body: JSON.stringify({ prompt, policy_id: policyId, agent_id: activeAgent }),
       });
       if (!propRes.ok) {
         const err = await propRes.json();
@@ -259,6 +267,41 @@ export default function Home() {
       setProposalRes(await propRes.json());
     } catch (err: any) {
       setErrorMsg(err.message);
+    }
+  };
+
+  const handleDownloadReceipt = async (checkoutId: string) => {
+    try {
+      const res = await fetch(`${API_BASE}/checkouts/${checkoutId}/receipt`);
+      if (!res.ok) throw new Error('Receipt generation failed');
+      const receipt = await res.json();
+      const blob = new Blob([JSON.stringify(receipt, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `APIL_Signed_Receipt_${checkoutId}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (e: any) {
+      setErrorMsg(e.message || 'Failed to download receipt');
+    }
+  };
+
+  const handleSimulateWebhook = async (checkoutId: string, eventType: string) => {
+    try {
+      setWebhookStatus(`Dispatching ${eventType}...`);
+      const res = await fetch(`${API_BASE}/webhooks/simulate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ checkout_id: checkoutId, event_type: eventType }),
+      });
+      if (!res.ok) throw new Error('Webhook simulation failed');
+      const data = await res.json();
+      setCheckoutSession(data.session);
+      setWebhookStatus(`✓ Webhook Processed: ${eventType} -> State is now ${data.session.state}`);
+      fetchAuditEvents();
+    } catch (e: any) {
+      setErrorMsg(e.message || 'Webhook failed');
     }
   };
 
@@ -487,6 +530,59 @@ export default function Home() {
                     <Sparkles size={19} color="var(--accent-cyan)" />
                     <h2 style={{ fontSize: '1.05rem', fontWeight: 700 }}>AI Purchase Goal</h2>
                   </div>
+
+                  {/* Multi-Agent Swarm Persona Selector */}
+                  <div style={{ marginBottom: '16px', padding: '12px 14px', background: 'rgba(255,255,255,0.03)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-subtle)' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '10px' }}>
+                      <span style={{ fontSize: '0.74rem', color: 'var(--accent-cyan)', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        <Bot size={14} /> MULTI-AGENT SWARM PERSONA
+                      </span>
+                      {policy?.agent_quotas?.[selectedAgent] && (
+                        <span style={{ fontSize: '0.72rem', color: 'var(--text-secondary)' }}>
+                          Quota Remaining: <strong style={{ color: 'var(--status-allow)' }}>₹{policy.agent_quotas[selectedAgent].remaining_budget?.toLocaleString()}</strong> / ₹{policy.agent_quotas[selectedAgent].allocated_budget?.toLocaleString()}
+                        </span>
+                      )}
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '8px' }}>
+                      {[
+                        { id: 'agent_hardware', label: 'Hardware Agent', role: 'Peripherals & Tech', icon: '🤖', promptPreset: 'Find a wireless mechanical keyboard under ₹5,000, auto-buy under ₹4,000.' },
+                        { id: 'agent_travel', label: 'Travel Agent', role: 'Flights & Stays', icon: '✈️', promptPreset: 'Book economy flights to Bangalore under ₹5,000.' },
+                        { id: 'agent_supplies', label: 'Supplies Agent', role: 'Desk & Peripherals', icon: '📎', promptPreset: 'Order custom brass keyboard desk mat under ₹2,000.' },
+                      ].map((ag) => {
+                        const isSelected = selectedAgent === ag.id;
+                        return (
+                          <button
+                            key={ag.id}
+                            type="button"
+                            onClick={() => {
+                              setSelectedAgent(ag.id as any);
+                              setPrompt(ag.promptPreset);
+                              if (policy) handleGenerateProposal(policy.policy_id, ag.id);
+                            }}
+                            style={{
+                              padding: '8px 10px',
+                              borderRadius: 'var(--radius-sm)',
+                              border: isSelected ? '1px solid var(--accent-cyan)' : '1px solid var(--border-subtle)',
+                              background: isSelected ? 'rgba(6,182,212,0.12)' : 'rgba(0,0,0,0.2)',
+                              color: isSelected ? '#fff' : 'var(--text-secondary)',
+                              cursor: 'pointer',
+                              textAlign: 'left',
+                              display: 'flex',
+                              flexDirection: 'column',
+                              gap: '2px',
+                              transition: 'all 0.15s ease',
+                            }}
+                          >
+                            <span style={{ fontSize: '0.78rem', fontWeight: isSelected ? 700 : 500 }}>
+                              {ag.icon} {ag.label}
+                            </span>
+                            <span style={{ fontSize: '0.64rem', color: 'var(--text-muted)' }}>{ag.role}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
                   <textarea
                     value={prompt}
                     onChange={(e) => setPrompt(e.target.value)}
@@ -766,6 +862,47 @@ export default function Home() {
                           <div>Status: <strong style={{ color: 'var(--status-allow)' }}>COMPLETED</strong></div>
                           <div>Amount: <strong style={{ color: '#fff' }}>₹{proposalRes.proposal?.total_amount?.toLocaleString()}</strong></div>
                         </div>
+
+                        {/* Signed Cryptographic Receipt Button */}
+                        <button
+                          type="button"
+                          onClick={() => handleDownloadReceipt(proposalRes.checkout_id)}
+                          className="btn btn-secondary"
+                          style={{ width: '100%', marginTop: '12px', fontSize: '0.78rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', padding: '8px' }}
+                        >
+                          <Download size={14} color="var(--accent-cyan)" /> Download Signed Audit Receipt (.json)
+                        </button>
+
+                        {/* Async PayPal Webhook Simulator */}
+                        <div style={{ marginTop: '14px', paddingTop: '12px', borderTop: '1px solid rgba(255,255,255,0.08)' }}>
+                          <div style={{ fontSize: '0.74rem', color: 'var(--text-secondary)', fontWeight: 600, marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                            <RotateCcw size={13} color="var(--accent-cyan)" /> Async PayPal Webhook Simulator:
+                          </div>
+                          <div style={{ display: 'flex', gap: '8px' }}>
+                            <button
+                              type="button"
+                              onClick={() => handleSimulateWebhook(proposalRes.checkout_id, 'PAYMENT.CAPTURE.REFUNDED')}
+                              className="btn btn-secondary"
+                              style={{ padding: '6px 10px', fontSize: '0.72rem', flex: 1 }}
+                            >
+                              💸 Simulate Refund Webhook
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleSimulateWebhook(proposalRes.checkout_id, 'CUSTOMER.DISPUTE.CREATED')}
+                              className="btn btn-secondary"
+                              style={{ padding: '6px 10px', fontSize: '0.72rem', flex: 1 }}
+                            >
+                              ⚠️ Simulate Dispute Webhook
+                            </button>
+                          </div>
+                          {webhookStatus && (
+                            <div style={{ marginTop: '8px', fontSize: '0.72rem', color: 'var(--accent-cyan)', background: 'rgba(6,182,212,0.1)', padding: '6px 10px', borderRadius: '4px' }}>
+                              {webhookStatus}
+                            </div>
+                          )}
+                        </div>
+
                         {isLiveSandbox && checkoutSession.paypal_order_id && !checkoutSession.paypal_order_id.startsWith('MOCK') && (
                           <a
                             href={`https://www.sandbox.paypal.com/activities/`}
@@ -779,6 +916,48 @@ export default function Home() {
                       </div>
                     )}
 
+                    {/* Webhook Refunded Receipt */}
+                    {checkoutSession?.state === 'REFUNDED' && (
+                      <div className="animate-fade-in" style={{ marginTop: '18px', padding: '16px', borderRadius: 'var(--radius-md)', background: 'rgba(168,85,247,0.12)', border: '1px solid rgba(168,85,247,0.35)' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#c084fc', marginBottom: '8px' }}>
+                          <RotateCcw size={18} />
+                          <strong style={{ fontSize: '0.9rem' }}>💸 Payment Refunded via Asynchronous Webhook!</strong>
+                        </div>
+                        <p style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', marginBottom: '10px' }}>
+                          PayPal webhook event <code style={{ color: '#c084fc' }}>PAYMENT.CAPTURE.REFUNDED</code> processed. Master policy and agent quota atomically restored.
+                        </p>
+                        <button
+                          type="button"
+                          onClick={() => handleDownloadReceipt(proposalRes.checkout_id)}
+                          className="btn btn-secondary"
+                          style={{ width: '100%', fontSize: '0.76rem', padding: '8px' }}
+                        >
+                          <Download size={13} /> Download Signed Refund Receipt (.json)
+                        </button>
+                      </div>
+                    )}
+
+                    {/* Webhook Disputed Receipt */}
+                    {checkoutSession?.state === 'DISPUTED' && (
+                      <div className="animate-fade-in" style={{ marginTop: '18px', padding: '16px', borderRadius: 'var(--radius-md)', background: 'rgba(234,179,8,0.12)', border: '1px solid rgba(234,179,8,0.35)' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#facc15', marginBottom: '8px' }}>
+                          <AlertTriangle size={18} />
+                          <strong style={{ fontSize: '0.9rem' }}>⚠️ Payment Disputed via PayPal Webhook</strong>
+                        </div>
+                        <p style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', marginBottom: '10px' }}>
+                          PayPal customer dispute received. State marked DISPUTED in immutable ledger. Cryptographic signed receipt available for chargeback defense.
+                        </p>
+                        <button
+                          type="button"
+                          onClick={() => handleDownloadReceipt(proposalRes.checkout_id)}
+                          className="btn btn-secondary"
+                          style={{ width: '100%', fontSize: '0.76rem', padding: '8px' }}
+                        >
+                          <Download size={13} /> Download Cryptographic Defense Receipt (.json)
+                        </button>
+                      </div>
+                    )}
+
                     {/* Drift Blocked Receipt */}
                     {checkoutSession?.state === 'POLICY_REJECTED' && (
                       <div className="animate-fade-in" style={{ marginTop: '18px', padding: '16px', borderRadius: 'var(--radius-md)', background: 'var(--status-reject-bg)', border: '1px solid var(--status-reject-border)' }}>
@@ -788,6 +967,14 @@ export default function Home() {
                         </div>
                         <p style={{ fontSize: '0.8rem', color: '#fca5a5', marginBottom: '6px' }}>{checkoutSession.failure_reason}</p>
                         <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>Zero payment request sent to PayPal. Funds 100% protected.</span>
+                        <button
+                          type="button"
+                          onClick={() => handleDownloadReceipt(proposalRes.checkout_id)}
+                          className="btn btn-secondary"
+                          style={{ width: '100%', marginTop: '10px', fontSize: '0.76rem', padding: '8px' }}
+                        >
+                          <Download size={13} /> Download Cryptographic Refusal Receipt (.json)
+                        </button>
                       </div>
                     )}
                   </div>

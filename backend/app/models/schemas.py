@@ -26,6 +26,21 @@ class TransactionState(str, Enum):
     RECONCILIATION_REQUIRED = "RECONCILIATION_REQUIRED"
     CANCELLED = "CANCELLED"
     EXPIRED = "EXPIRED"
+    REFUNDED = "REFUNDED"
+    DISPUTED = "DISPUTED"
+
+
+class AgentQuota(BaseModel):
+    agent_id: str = Field(..., min_length=1, description="Identifier for this agent persona")
+    agent_name: str = Field(..., min_length=1, description="Display name for the agent")
+    role: str = Field(..., description="Role of the agent (e.g. Hardware, Travel, Supplies)")
+    allocated_budget: float = Field(..., gt=0.0, description="Maximum budget allocated to this agent")
+    spent_budget: float = Field(default=0.0, ge=0.0, description="Amount already captured by this agent")
+    is_active: bool = Field(default=True, description="Whether this agent is authorized to submit proposals")
+
+    @property
+    def remaining_budget(self) -> float:
+        return round(max(0.0, self.allocated_budget - self.spent_budget), 2)
 
 
 class LineItem(BaseModel):
@@ -48,6 +63,7 @@ class AuthorizationPolicy(BaseModel):
     user_id: str = Field(..., min_length=1, description="User who confirmed this authorization")
     product_category: Optional[str] = Field(None, description="Allowed product category (e.g. mechanical keyboard)")
     maximum_total: float = Field(..., gt=0.0, description="Absolute ceiling budget across line items, tax, and shipping")
+    spent_total: float = Field(default=0.0, ge=0.0, description="Cumulative spend across all agents under this policy")
     automatic_purchase_limit: float = Field(
         ..., ge=0.0, description="Maximum amount that can be purchased automatically without explicit approval"
     )
@@ -57,6 +73,9 @@ class AuthorizationPolicy(BaseModel):
         default=True, description="Whether exceeding automatic_purchase_limit routes to approval instead of reject"
     )
     is_revoked: bool = Field(default=False, description="Whether the user revoked this authorization")
+    agent_quotas: dict[str, AgentQuota] = Field(
+        default_factory=dict, description="Granular budget quotas assigned per agent persona in swarm"
+    )
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     expires_at: Optional[datetime] = Field(None, description="Optional expiry timestamp")
 
@@ -80,6 +99,7 @@ class PurchaseProposal(BaseModel):
     proposal_id: str = Field(..., min_length=1, description="Unique proposal identifier")
     policy_id: str = Field(..., min_length=1, description="ID of policy this proposal is evaluated against")
     policy_version: int = Field(..., ge=1, description="Policy version this proposal was prepared under")
+    agent_id: Optional[str] = Field(default="agent_hardware", description="Agent persona that originated this proposal")
     merchant: str = Field(..., min_length=1, description="Merchant or vendor name")
     items: List[LineItem] = Field(..., min_length=1, description="Line items to be purchased")
     item_subtotal: float = Field(..., ge=0.0, description="Sum of line item totals")
@@ -146,3 +166,35 @@ class AuditEvent(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
     prev_event_hash: Optional[str] = None
     event_hash: str
+
+
+class SignedAuditReceipt(BaseModel):
+    receipt_id: str
+    checkout_id: str
+    timestamp: str
+    decision: str
+    status: str
+    agent_id: Optional[str] = None
+    policy_id: str
+    policy_version: int
+    proposal_fingerprint: str
+    total_amount: float
+    currency: str
+    merchant: str
+    items_count: int
+    paypal_order_id: Optional[str] = None
+    paypal_capture_id: Optional[str] = None
+    signature_algorithm: str = "HMAC-SHA256"
+    signer_identity: str = "APIL-Ledger-Authority-v1"
+    signature: str
+    raw_canonical_digest: str
+
+
+class PayPalWebhookEvent(BaseModel):
+    id: str
+    event_type: str
+    create_time: str
+    resource_type: Optional[str] = None
+    resource: dict[str, Any]
+    summary: Optional[str] = None
+

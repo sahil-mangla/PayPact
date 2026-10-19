@@ -38,6 +38,18 @@ class CreateProposalRequest(BaseModel):
     prompt: str = Field(..., min_length=2)
     policy_id: str = Field(..., min_length=1)
     preferred_sku: Optional[str] = None
+    agent_id: Optional[str] = Field(default="agent_hardware", description="Agent persona ID in swarm")
+
+
+class SimulateWebhookRequest(BaseModel):
+    checkout_id: str
+    event_type: str = Field(
+        default="PAYMENT.CAPTURE.REFUNDED",
+        description="PayPal event type (e.g. PAYMENT.CAPTURE.REFUNDED, CUSTOMER.DISPUTE.CREATED)",
+    )
+    amount: Optional[float] = None
+    reason: Optional[str] = None
+
 
 
 class ApproveProposalRequest(BaseModel):
@@ -126,6 +138,7 @@ async def create_proposal(req: CreateProposalRequest):
             user_prompt=req.prompt,
             policy=policy,
             preferred_sku=req.preferred_sku,
+            agent_id=req.agent_id,
         )
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -262,6 +275,83 @@ async def get_checkout(checkout_id: str):
     if not session:
         raise HTTPException(status_code=404, detail="Checkout not found.")
     return session
+
+
+@router.get("/checkouts/{checkout_id}/receipt")
+async def get_checkout_receipt(checkout_id: str):
+    """Generate tamper-evident, digitally signed audit receipt for a checkout session."""
+    try:
+        return coordinator.generate_audit_receipt(checkout_id)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post("/webhooks/paypal")
+async def handle_paypal_webhook(payload: Dict[str, Any]):
+    """Production PayPal Webhook Listener endpoint."""
+    event_type = payload.get("event_type", "")
+    resource = payload.get("resource", {})
+    summary = payload.get("summary")
+    session = await coordinator.process_webhook_event(
+        event_type=event_type,
+        resource=resource,
+        summary=summary,
+    )
+    return {
+        "status": "processed",
+        "event_type": event_type,
+        "updated_checkout": session.checkout_id if session else None,
+    }
+
+
+@router.post("/webhooks/simulate")
+async def simulate_paypal_webhook(req: SimulateWebhookRequest):
+    """Interactive webhook simulation for local demos and Integrity Lab."""
+    session = coordinator.get_session(req.checkout_id)
+    if not session:
+        raise HTTPException(status_code=404, detail=f"Checkout '{req.checkout_id}' not found.")
+
+    refund_amount = req.amount or session.proposal.total_amount
+    simulated_resource = {
+        "id": session.paypal_capture_id or f"SIM-CAP-{req.checkout_id}",
+        "amount": {"value": f"{refund_amount:.2f}", "currency_code": session.proposal.currency},
+    }
+    updated = await coordinator.process_webhook_event(
+        event_type=req.event_type,
+        resource=simulated_resource,
+        checkout_id=req.checkout_id,
+        summary=req.reason or f"Simulated {req.event_type} event",
+    )
+    return {"status": "simulated", "session": updated}
+
+
+@router.get("/swarm/personas")
+async def get_swarm_personas():
+    """List available specialized agent personas in the swarm with quota defaults."""
+    return [
+        {
+            "agent_id": "agent_hardware",
+            "name": "Hardware Procurement Agent",
+            "role": "Hardware & Tech Accessories",
+            "quota_pct": 60,
+            "description": "Autonomous agent for sourcing computer peripherals, keycaps, and hardware components.",
+        },
+        {
+            "agent_id": "agent_travel",
+            "name": "Travel & Bookings Agent",
+            "role": "Flights, Hotels & Transit",
+            "quota_pct": 25,
+            "description": "Agent for booking corporate flights, hotel accommodations, and conference passes.",
+        },
+        {
+            "agent_id": "agent_supplies",
+            "name": "Office Supplies Agent",
+            "role": "Desk Accessories & Peripherals",
+            "quota_pct": 15,
+            "description": "Agent for recurring workplace supplies, cables, and ergonomic accessories.",
+        },
+    ]
+
 
 
 # ----------------------------------------------------

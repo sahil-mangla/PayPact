@@ -293,6 +293,96 @@ class DeterministicPolicyEngine:
             )
         )
 
+        # 8b. Cumulative Master Spend Check
+        remaining_master_budget = round(policy.maximum_total - policy.spent_total, 2)
+        if policy.spent_total > 0 and proposal.total_amount > remaining_master_budget:
+            checks.append(
+                IntegrityCheckResult(
+                    check_name="master_cumulative_budget_check",
+                    passed=False,
+                    reason=(
+                        f"Proposal amount ({proposal.total_amount:.2f}) exceeds remaining master budget "
+                        f"({remaining_master_budget:.2f} of {policy.maximum_total:.2f})."
+                    ),
+                    metadata={"remaining": remaining_master_budget, "proposal_amount": proposal.total_amount},
+                )
+            )
+            return PolicyEvaluationResult(
+                decision=PolicyDecisionType.REJECT,
+                policy_id=policy.policy_id,
+                policy_version=policy.version,
+                proposal_fingerprint=fingerprint,
+                checks=checks,
+                primary_reason=f"Exceeds remaining master budget ({proposal.total_amount:.2f} > {remaining_master_budget:.2f}).",
+                evaluated_at=now,
+            )
+
+        # 8c. Agent Persona Swarm Quota Check (if agent_quotas configured)
+        if policy.agent_quotas and proposal.agent_id:
+            quota = policy.agent_quotas.get(proposal.agent_id)
+            if not quota:
+                checks.append(
+                    IntegrityCheckResult(
+                        check_name="agent_quota_check",
+                        passed=False,
+                        reason=f"Agent persona '{proposal.agent_id}' is not registered under policy quotas.",
+                    )
+                )
+                return PolicyEvaluationResult(
+                    decision=PolicyDecisionType.REJECT,
+                    policy_id=policy.policy_id,
+                    policy_version=policy.version,
+                    proposal_fingerprint=fingerprint,
+                    checks=checks,
+                    primary_reason=f"Agent '{proposal.agent_id}' not authorized in swarm.",
+                    evaluated_at=now,
+                )
+            if not quota.is_active:
+                checks.append(
+                    IntegrityCheckResult(
+                        check_name="agent_quota_check",
+                        passed=False,
+                        reason=f"Agent persona '{proposal.agent_id}' is currently deactivated.",
+                    )
+                )
+                return PolicyEvaluationResult(
+                    decision=PolicyDecisionType.REJECT,
+                    policy_id=policy.policy_id,
+                    policy_version=policy.version,
+                    proposal_fingerprint=fingerprint,
+                    checks=checks,
+                    primary_reason=f"Agent '{proposal.agent_id}' is deactivated.",
+                    evaluated_at=now,
+                )
+            if proposal.total_amount > quota.remaining_budget:
+                checks.append(
+                    IntegrityCheckResult(
+                        check_name="agent_quota_check",
+                        passed=False,
+                        reason=(
+                            f"Proposal amount ({proposal.total_amount:.2f}) exceeds agent '{quota.agent_name}' "
+                            f"remaining quota ({quota.remaining_budget:.2f} of {quota.allocated_budget:.2f})."
+                        ),
+                        metadata={"remaining": quota.remaining_budget, "proposal_amount": proposal.total_amount},
+                    )
+                )
+                return PolicyEvaluationResult(
+                    decision=PolicyDecisionType.REJECT,
+                    policy_id=policy.policy_id,
+                    policy_version=policy.version,
+                    proposal_fingerprint=fingerprint,
+                    checks=checks,
+                    primary_reason=f"Exceeds agent '{quota.agent_name}' quota ({proposal.total_amount:.2f} > {quota.remaining_budget:.2f}).",
+                    evaluated_at=now,
+                )
+            checks.append(
+                IntegrityCheckResult(
+                    check_name="agent_quota_check",
+                    passed=True,
+                    reason=f"Agent '{quota.agent_name}' has sufficient quota ({quota.remaining_budget:.2f} remaining).",
+                )
+            )
+
         # 9. Automatic Purchase Threshold Check
         if proposal.total_amount <= policy.automatic_purchase_limit:
             checks.append(
