@@ -1,4 +1,5 @@
 import hashlib
+import hmac
 import json
 from typing import Any, Dict, List
 from app.models.schemas import LineItem, PurchaseProposal
@@ -49,11 +50,11 @@ def compute_proposal_fingerprint(proposal: PurchaseProposal) -> str:
 
 
 def verify_proposal_fingerprint(proposal: PurchaseProposal, expected_fingerprint: str) -> bool:
-    """Verify whether a proposal matches an expected canonical fingerprint."""
+    """Verify whether a proposal matches an expected canonical fingerprint (constant-time)."""
     if not expected_fingerprint:
         return False
     actual = compute_proposal_fingerprint(proposal)
-    return actual.lower() == expected_fingerprint.strip().lower()
+    return hmac.compare_digest(actual.lower(), expected_fingerprint.strip().lower())
 
 
 def get_fingerprint_diff(p1: PurchaseProposal, p2: PurchaseProposal) -> Dict[str, Any]:

@@ -1,4 +1,5 @@
 import hashlib
+import hmac
 import json
 import uuid
 from datetime import datetime, timezone
@@ -104,7 +105,7 @@ class AuditLedger:
             }
             serialized = json.dumps(hash_payload, sort_keys=True, default=str)
             computed_hash = hashlib.sha256(serialized.encode("utf-8")).hexdigest()
-            if computed_hash != event.event_hash:
+            if not hmac.compare_digest(computed_hash, event.event_hash):
                 return False
             expected_prev_hash = event.event_hash
         return True
