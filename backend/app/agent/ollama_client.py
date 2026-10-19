@@ -3,6 +3,7 @@
 Provides zero-cloud, 100% local model inference for natural language intent
 parsing and contextual product recommendation rationale.
 """
+
 from __future__ import annotations
 
 import json

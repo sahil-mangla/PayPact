@@ -56,7 +56,9 @@ def make_proposal(
 
 def test_happy_path_automatic_allow(default_policy):
     # Total 3899 is below auto limit 4000 and max 5000 -> ALLOW
-    proposal = make_proposal(price=3899.00, stated_subtotal=3899.00, stated_total=3899.00)
+    proposal = make_proposal(
+        price=3899.00, stated_subtotal=3899.00, stated_total=3899.00
+    )
     result = DeterministicPolicyEngine.evaluate(proposal, default_policy)
 
     assert result.decision == PolicyDecisionType.ALLOW
@@ -66,18 +68,24 @@ def test_happy_path_automatic_allow(default_policy):
 
 def test_happy_path_require_approval(default_policy):
     # Total 4500 is above auto limit 4000 but below max budget 5000 -> REQUIRE_APPROVAL
-    proposal = make_proposal(price=4500.00, stated_subtotal=4500.00, stated_total=4500.00)
+    proposal = make_proposal(
+        price=4500.00, stated_subtotal=4500.00, stated_total=4500.00
+    )
     result = DeterministicPolicyEngine.evaluate(proposal, default_policy)
 
     assert result.decision == PolicyDecisionType.REQUIRE_APPROVAL
     # The automatic limit check failed, but maximum budget passed
-    auto_check = next(c for c in result.checks if c.check_name == "automatic_limit_check")
+    auto_check = next(
+        c for c in result.checks if c.check_name == "automatic_limit_check"
+    )
     assert auto_check.passed is False
 
 
 def test_rejects_exceeding_maximum_budget(default_policy):
     # Total 5200 exceeds max budget 5000 -> REJECT
-    proposal = make_proposal(price=5200.00, stated_subtotal=5200.00, stated_total=5200.00)
+    proposal = make_proposal(
+        price=5200.00, stated_subtotal=5200.00, stated_total=5200.00
+    )
     result = DeterministicPolicyEngine.evaluate(proposal, default_policy)
 
     assert result.decision == PolicyDecisionType.REJECT
@@ -86,7 +94,9 @@ def test_rejects_exceeding_maximum_budget(default_policy):
 
 def test_rejects_arithmetic_subtotal_tamper(default_policy):
     # 1 item of 3899, but proposal claims subtotal is 2000 -> REJECT
-    proposal = make_proposal(price=3899.00, stated_subtotal=2000.00, stated_total=2000.00)
+    proposal = make_proposal(
+        price=3899.00, stated_subtotal=2000.00, stated_total=2000.00
+    )
     result = DeterministicPolicyEngine.evaluate(proposal, default_policy)
 
     assert result.decision == PolicyDecisionType.REJECT
@@ -152,7 +162,9 @@ def test_rejects_unauthorized_merchant(default_policy):
 
 def test_pre_execution_detects_drift_after_approval(default_policy):
     # User approved proposal at 4500 (fingerprint fp1)
-    proposal_approved = make_proposal(price=4500.00, stated_subtotal=4500.00, stated_total=4500.00)
+    proposal_approved = make_proposal(
+        price=4500.00, stated_subtotal=4500.00, stated_total=4500.00
+    )
     approved_fp = compute_proposal_fingerprint(proposal_approved)
 
     # Immediately before execution, merchant added 300 shipping

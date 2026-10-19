@@ -72,7 +72,7 @@ async def test_scenario_g_timeout_reconciliation(lab):
 async def test_full_benchmark_matrix(lab):
     report = await lab.run_full_benchmark()
     assert report.total_scenarios == 21  # 7 scenarios * 3 systems
-    
+
     summary = report.summary_by_system
     # Proposed APIL must have 100% pass rate
     assert summary["PROPOSED_APIL"]["pass_rate_pct"] == 100.0

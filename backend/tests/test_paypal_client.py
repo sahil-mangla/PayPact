@@ -45,8 +45,10 @@ async def test_create_order_mock(mock_paypal_client, sample_proposal):
 @pytest.mark.asyncio
 async def test_capture_order_mock(mock_paypal_client, sample_proposal):
     order = await mock_paypal_client.create_order(sample_proposal, request_id="req_002")
-    captured = await mock_paypal_client.capture_order(order.order_id, request_id="req_002_cap")
-    
+    captured = await mock_paypal_client.capture_order(
+        order.order_id, request_id="req_002_cap"
+    )
+
     assert captured.order_id == order.order_id
     assert captured.status == "COMPLETED"
     assert captured.capture_id is not None
@@ -57,7 +59,7 @@ async def test_capture_order_mock(mock_paypal_client, sample_proposal):
 async def test_reconcile_order_details_mock(mock_paypal_client, sample_proposal):
     order = await mock_paypal_client.create_order(sample_proposal, request_id="req_003")
     details = await mock_paypal_client.get_order_details(order.order_id)
-    
+
     assert details.order_id == order.order_id
     assert details.status == "CREATED"
 

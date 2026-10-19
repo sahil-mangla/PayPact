@@ -16,7 +16,7 @@ from app.models.schemas import (
 
 class DeterministicPolicyEngine:
     """Pure deterministic policy evaluation engine.
-    
+
     Operates without language models or probabilistic inference.
     Fails closed on any ambiguity, math error, version mismatch, or limit violation.
     """
@@ -140,7 +140,9 @@ class DeterministicPolicyEngine:
         )
 
         # 4. Currency Whitelist Check
-        if proposal.currency.upper() not in [c.upper() for c in policy.allowed_currencies]:
+        if proposal.currency.upper() not in [
+            c.upper() for c in policy.allowed_currencies
+        ]:
             checks.append(
                 IntegrityCheckResult(
                     check_name="currency_check",
@@ -206,7 +208,10 @@ class DeterministicPolicyEngine:
                         f"Calculated line-item sum ({calculated_subtotal}) does not match "
                         f"proposal item_subtotal ({proposal.item_subtotal})."
                     ),
-                    metadata={"calculated": calculated_subtotal, "stated": proposal.item_subtotal},
+                    metadata={
+                        "calculated": calculated_subtotal,
+                        "stated": proposal.item_subtotal,
+                    },
                 )
             )
             return PolicyEvaluationResult(
@@ -239,7 +244,10 @@ class DeterministicPolicyEngine:
                         f"Calculated total ({calculated_total}) does not match "
                         f"proposal total_amount ({proposal.total_amount})."
                     ),
-                    metadata={"calculated": calculated_total, "stated": proposal.total_amount},
+                    metadata={
+                        "calculated": calculated_total,
+                        "stated": proposal.total_amount,
+                    },
                 )
             )
             return PolicyEvaluationResult(
@@ -269,7 +277,10 @@ class DeterministicPolicyEngine:
                         f"Total amount ({proposal.total_amount:.2f} {proposal.currency}) exceeds "
                         f"maximum authorized budget ({policy.maximum_total:.2f} {proposal.currency})."
                     ),
-                    metadata={"amount": proposal.total_amount, "max_budget": policy.maximum_total},
+                    metadata={
+                        "amount": proposal.total_amount,
+                        "max_budget": policy.maximum_total,
+                    },
                 )
             )
             return PolicyEvaluationResult(
@@ -304,7 +315,10 @@ class DeterministicPolicyEngine:
                         f"Proposal amount ({proposal.total_amount:.2f}) exceeds remaining master budget "
                         f"({remaining_master_budget:.2f} of {policy.maximum_total:.2f})."
                     ),
-                    metadata={"remaining": remaining_master_budget, "proposal_amount": proposal.total_amount},
+                    metadata={
+                        "remaining": remaining_master_budget,
+                        "proposal_amount": proposal.total_amount,
+                    },
                 )
             )
             return PolicyEvaluationResult(
@@ -363,7 +377,10 @@ class DeterministicPolicyEngine:
                             f"Proposal amount ({proposal.total_amount:.2f}) exceeds agent '{quota.agent_name}' "
                             f"remaining quota ({quota.remaining_budget:.2f} of {quota.allocated_budget:.2f})."
                         ),
-                        metadata={"remaining": quota.remaining_budget, "proposal_amount": proposal.total_amount},
+                        metadata={
+                            "remaining": quota.remaining_budget,
+                            "proposal_amount": proposal.total_amount,
+                        },
                     )
                 )
                 return PolicyEvaluationResult(
@@ -393,7 +410,10 @@ class DeterministicPolicyEngine:
                         f"Total amount ({proposal.total_amount:.2f}) is within automatic purchase "
                         f"threshold ({policy.automatic_purchase_limit:.2f})."
                     ),
-                    metadata={"amount": proposal.total_amount, "auto_limit": policy.automatic_purchase_limit},
+                    metadata={
+                        "amount": proposal.total_amount,
+                        "auto_limit": policy.automatic_purchase_limit,
+                    },
                 )
             )
             return PolicyEvaluationResult(
@@ -416,7 +436,10 @@ class DeterministicPolicyEngine:
                         f"Total amount ({proposal.total_amount:.2f}) exceeds automatic purchase "
                         f"limit ({policy.automatic_purchase_limit:.2f}). User approval required."
                     ),
-                    metadata={"amount": proposal.total_amount, "auto_limit": policy.automatic_purchase_limit},
+                    metadata={
+                        "amount": proposal.total_amount,
+                        "auto_limit": policy.automatic_purchase_limit,
+                    },
                 )
             )
             return PolicyEvaluationResult(
@@ -459,7 +482,7 @@ class DeterministicPolicyEngine:
         current_time: Optional[datetime] = None,
     ) -> PolicyEvaluationResult:
         """Lifecycle Revalidation Gate immediately prior to PayPal execution.
-        
+
         Guarantees that:
         1. If user previously approved this proposal, the proposal has not drifted by even 1 cent or SKU.
         2. The policy has not been revoked or updated in the interim.

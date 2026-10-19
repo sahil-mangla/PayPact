@@ -38,10 +38,10 @@ def make_sample_proposal(
 def test_fingerprint_deterministic_and_reproducible():
     p1 = make_sample_proposal()
     p2 = make_sample_proposal()
-    
+
     fp1 = compute_proposal_fingerprint(p1)
     fp2 = compute_proposal_fingerprint(p2)
-    
+
     assert fp1 == fp2
     assert len(fp1) == 64
     assert verify_proposal_fingerprint(p1, fp1) is True
@@ -50,13 +50,13 @@ def test_fingerprint_deterministic_and_reproducible():
 def test_fingerprint_changes_on_price_drift():
     p1 = make_sample_proposal(price=3899.00)
     p2 = make_sample_proposal(price=3900.00)  # Drift of just 1 rupee
-    
+
     fp1 = compute_proposal_fingerprint(p1)
     fp2 = compute_proposal_fingerprint(p2)
-    
+
     assert fp1 != fp2
     assert verify_proposal_fingerprint(p1, fp2) is False
-    
+
     diff = get_fingerprint_diff(p1, p2)
     assert "total_amount" in diff
     assert diff["total_amount"]["original"] == "3899.00"
@@ -66,10 +66,10 @@ def test_fingerprint_changes_on_price_drift():
 def test_fingerprint_changes_on_added_shipping_fee():
     p1 = make_sample_proposal(shipping=0.00)
     p2 = make_sample_proposal(shipping=150.00)
-    
+
     fp1 = compute_proposal_fingerprint(p1)
     fp2 = compute_proposal_fingerprint(p2)
-    
+
     assert fp1 != fp2
     diff = get_fingerprint_diff(p1, p2)
     assert "shipping_fee" in diff
@@ -80,10 +80,10 @@ def test_fingerprint_changes_on_added_shipping_fee():
 def test_fingerprint_changes_on_product_substitution():
     p1 = make_sample_proposal(sku="KB-K2-V2-RGB")
     p2 = make_sample_proposal(sku="KB-K2-V2-WHITE")  # Substituted switch/variant
-    
+
     fp1 = compute_proposal_fingerprint(p1)
     fp2 = compute_proposal_fingerprint(p2)
-    
+
     assert fp1 != fp2
 
 

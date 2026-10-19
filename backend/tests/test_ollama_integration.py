@@ -33,10 +33,11 @@ async def test_ollama_status_endpoint():
     from httpx import ASGITransport, AsyncClient
     from app.main import app
 
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         response = await client.get("/api/agent/model-status")
         assert response.status_code == 200
         data = response.json()
         assert "available" in data
         assert data["model"] == "qwen2.5-coder:7b"
-

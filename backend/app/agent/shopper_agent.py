@@ -14,7 +14,7 @@ from app.models.schemas import (
 
 class ShopperAgent:
     """AI Purchasing Agent.
-    
+
     Translates user purchase requests into structured recommendations and candidate proposals.
     Strictly isolated: has ZERO payment execution authority and ZERO access to payment tokens.
     """
@@ -26,7 +26,7 @@ class ShopperAgent:
         user_id: str = "usr_demo",
     ) -> AuthorizationPolicy:
         """Parse natural language request into confirmed policy draft.
-        
+
         Extracts budget limits, currency, and product categories.
         Attempts local Ollama LLM extraction first (e.g. qwen2.5-coder:7b),
         with seamless deterministic fallback.
@@ -39,6 +39,7 @@ class ShopperAgent:
         # 1. Attempt local Ollama inference
         try:
             from app.agent.ollama_client import OllamaClient
+
             ollama_data = OllamaClient.parse_intent(user_prompt)
         except Exception:
             ollama_data = None
@@ -46,9 +47,15 @@ class ShopperAgent:
         if ollama_data and isinstance(ollama_data, dict):
             if "category" in ollama_data and ollama_data["category"]:
                 cat_str = str(ollama_data["category"]).lower()
-                if any(k in cat_str for k in ["flight", "travel", "hotel", "airline", "ticket"]):
+                if any(
+                    k in cat_str
+                    for k in ["flight", "travel", "hotel", "airline", "ticket"]
+                ):
                     category = "travel"
-                elif any(k in cat_str for k in ["mat", "dock", "supplies", "desk", "organizer", "wrist"]):
+                elif any(
+                    k in cat_str
+                    for k in ["mat", "dock", "supplies", "desk", "organizer", "wrist"]
+                ):
                     category = "office supplies"
                 elif "keyboard" in cat_str:
                     category = "mechanical keyboard"
@@ -58,11 +65,15 @@ class ShopperAgent:
                     category = "computer monitor"
                 else:
                     category = cat_str
-            if "max_budget" in ollama_data and isinstance(ollama_data["max_budget"], (int, float)):
+            if "max_budget" in ollama_data and isinstance(
+                ollama_data["max_budget"], (int, float)
+            ):
                 parsed_max = float(ollama_data["max_budget"])
                 if parsed_max > 0:
                     max_total = parsed_max
-            if "auto_buy_limit" in ollama_data and isinstance(ollama_data["auto_buy_limit"], (int, float)):
+            if "auto_buy_limit" in ollama_data and isinstance(
+                ollama_data["auto_buy_limit"], (int, float)
+            ):
                 parsed_auto = float(ollama_data["auto_buy_limit"])
                 if parsed_auto > 0:
                     auto_limit = min(parsed_auto, max_total)
@@ -70,7 +81,10 @@ class ShopperAgent:
                     auto_limit = round(max_total * 0.8, 2)
             else:
                 auto_limit = round(max_total * 0.8, 2)
-            if "currency" in ollama_data and str(ollama_data["currency"]).upper() in ["INR", "USD"]:
+            if "currency" in ollama_data and str(ollama_data["currency"]).upper() in [
+                "INR",
+                "USD",
+            ]:
                 currency = str(ollama_data["currency"]).upper()
         else:
             # 2. Resilient heuristic fallback
@@ -83,7 +97,10 @@ class ShopperAgent:
                 currency = "INR"
 
             # Extract numerical limits (budget and auto-threshold)
-            raw_matches = re.findall(r"(?:₹|\$|rs\.?|inr)?\s*((?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d{1,2})?)", prompt_lower)
+            raw_matches = re.findall(
+                r"(?:₹|\$|rs\.?|inr)?\s*((?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d{1,2})?)",
+                prompt_lower,
+            )
             clean_nums = []
             for n in raw_matches:
                 try:
@@ -102,11 +119,52 @@ class ShopperAgent:
                 auto_limit = round(max_total * 0.8, 2)
 
             # Detect category
-            if any(k in prompt_lower for k in ["flight", "flights", "hotel", "ticket", "tickets", "bangalore", "blr", "delhi", "airline", "travel", "transit"]):
+            if any(
+                k in prompt_lower
+                for k in [
+                    "flight",
+                    "flights",
+                    "hotel",
+                    "ticket",
+                    "tickets",
+                    "bangalore",
+                    "blr",
+                    "delhi",
+                    "airline",
+                    "travel",
+                    "transit",
+                ]
+            ):
                 category = "travel"
-            elif any(k in prompt_lower for k in ["mat", "mats", "wrist", "dock", "supplies", "desk", "cable", "organizer", "tray"]):
+            elif any(
+                k in prompt_lower
+                for k in [
+                    "mat",
+                    "mats",
+                    "wrist",
+                    "dock",
+                    "supplies",
+                    "desk",
+                    "cable",
+                    "organizer",
+                    "tray",
+                ]
+            ):
                 category = "office supplies"
-            elif any(k in prompt_lower for k in ["keyboard", "keyboards", "switch", "switches", "keycap", "keycaps", "keychron", "meckeys", "typing"]):
+            elif any(
+                k in prompt_lower
+                for k in [
+                    "keyboard",
+                    "keyboards",
+                    "switch",
+                    "switches",
+                    "keycap",
+                    "keycaps",
+                    "keychron",
+                    "meckeys",
+                    "typing",
+                ]
+            ):
                 category = "mechanical keyboard"
             elif "mouse" in prompt_lower:
                 category = "computer mouse"
@@ -195,13 +253,18 @@ class ShopperAgent:
             "agent_supplies": "office supplies",
             "agent_hardware": "mechanical keyboard",
         }
-        preferred_cat = agent_category_map.get(agent_id or "") or policy.product_category
+        preferred_cat = (
+            agent_category_map.get(agent_id or "") or policy.product_category
+        )
 
         if not target_product:
             candidates = search_catalogue(user_prompt, category_filter=preferred_cat)
             # Find best candidate within target category
             for cand in candidates:
-                if preferred_cat and (preferred_cat.lower() in cand.category.lower() or cand.category.lower() in preferred_cat.lower()):
+                if preferred_cat and (
+                    preferred_cat.lower() in cand.category.lower()
+                    or cand.category.lower() in preferred_cat.lower()
+                ):
                     target_product = cand
                     break
             if not target_product and candidates:
@@ -234,7 +297,9 @@ class ShopperAgent:
             shipping_fee=shipping_fee,
             tax_fee=tax_fee,
             total_amount=total_amount,
-            currency=policy.allowed_currencies[0] if policy.allowed_currencies else "INR",
+            currency=policy.allowed_currencies[0]
+            if policy.allowed_currencies
+            else "INR",
         )
 
         # Attach computed canonical fingerprint
@@ -244,6 +309,7 @@ class ShopperAgent:
         explanation: str
         try:
             from app.agent.ollama_client import OllamaClient
+
             ollama_rationale = OllamaClient.generate_recommendation_rationale(
                 user_prompt=user_prompt,
                 product_name=target_product.name,
@@ -253,7 +319,9 @@ class ShopperAgent:
                 product_desc=target_product.description,
             )
             if ollama_rationale:
-                explanation = f"{ollama_rationale} [Inferred locally via Ollama qwen2.5-coder:7b]"
+                explanation = (
+                    f"{ollama_rationale} [Inferred locally via Ollama qwen2.5-coder:7b]"
+                )
             else:
                 explanation = (
                     f"I recommend the '{target_product.name}' from {target_product.merchant}. "
@@ -272,4 +340,3 @@ class ShopperAgent:
             "proposal": proposal,
             "product": target_product,
         }
-

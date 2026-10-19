@@ -10,8 +10,8 @@ from app.models.schemas import AuditEvent
 
 class AuditLedger:
     """Tamper-evident, hash-chained append-only event ledger.
-    
-    Provides verifiable provenance for every authorization decision, 
+
+    Provides verifiable provenance for every authorization decision,
     proposal generation, approval, policy check, and payment state transition.
     """
 
@@ -84,7 +84,7 @@ class AuditLedger:
 
     def verify_ledger_integrity(self) -> bool:
         """Verify complete cryptographic chain of the ledger.
-        
+
         Returns False if any event was tampered with, deleted, or reordered.
         """
         expected_prev_hash = "GENESIS_ROOT_HASH"

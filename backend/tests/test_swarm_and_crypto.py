@@ -1,4 +1,5 @@
 """Tests for Multi-Agent Swarm Hierarchy, Signed Audit Receipts, and Webhooks."""
+
 import pytest
 from httpx import ASGITransport, AsyncClient
 
@@ -62,7 +63,11 @@ def test_swarm_agent_quota_exceeded(swarm_policy):
         policy_version=1,
         agent_id="agent_travel",  # Travel quota is 1000
         merchant="Airline Inc",
-        items=[LineItem(sku="FLIGHT-01", name="Flight Ticket", quantity=1, unit_price=1200.0)],
+        items=[
+            LineItem(
+                sku="FLIGHT-01", name="Flight Ticket", quantity=1, unit_price=1200.0
+            )
+        ],
         item_subtotal=1200.0,
         shipping_fee=0.0,
         tax_fee=0.0,
@@ -139,7 +144,9 @@ def test_signed_audit_receipt_generation_and_tamper_detection():
     assert verify_signed_receipt(tampered_amount) is False
 
     # 3. Tampered fingerprint must fail verification
-    tampered_fp = receipt.model_copy(update={"proposal_fingerprint": "altered_fingerprint_hash"})
+    tampered_fp = receipt.model_copy(
+        update={"proposal_fingerprint": "altered_fingerprint_hash"}
+    )
     assert verify_signed_receipt(tampered_fp) is False
 
     # 4. Tampered signature must fail verification
@@ -219,7 +226,9 @@ async def test_webhook_refund_lifecycle_and_spend_credit():
 @pytest.mark.asyncio
 async def test_api_receipt_and_simulate_webhook_endpoints():
     """Verify REST API endpoints for receipt generation, webhook simulation, and swarm personas."""
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         # 1. Swarm personas endpoint
         personas_resp = await client.get("/api/swarm/personas")
         assert personas_resp.status_code == 200

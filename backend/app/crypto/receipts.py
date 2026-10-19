@@ -4,6 +4,7 @@ Generates tamper-evident, digitally signed audit receipts (HMAC-SHA256 / JSON-LD
 that bind the approved cryptographic proposal fingerprint, policy constraints,
 and PayPal execution telemetry together for external dispute defense.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -12,12 +13,14 @@ import json
 import os
 import uuid
 from datetime import datetime, timezone
-from typing import Any, Dict, Optional
+from typing import Optional
 
 from app.models.schemas import SignedAuditReceipt
 
 
-APIL_SIGNING_SECRET = os.getenv("APIL_SIGNING_SECRET", "apil_master_cryptographic_audit_signing_secret_2026")
+APIL_SIGNING_SECRET = os.getenv(
+    "APIL_SIGNING_SECRET", "apil_master_cryptographic_audit_signing_secret_2026"
+)
 SIGNER_IDENTITY = "APIL-Ledger-Authority-v1.0"
 
 
@@ -64,7 +67,9 @@ def generate_signed_receipt(
 
     canonical_json = json.dumps(core_payload, sort_keys=True, separators=(",", ":"))
     raw_digest = hashlib.sha256(canonical_json.encode("utf-8")).hexdigest()
-    signature = hmac.new(secret, canonical_json.encode("utf-8"), hashlib.sha256).hexdigest()
+    signature = hmac.new(
+        secret, canonical_json.encode("utf-8"), hashlib.sha256
+    ).hexdigest()
 
     return SignedAuditReceipt(
         receipt_id=receipt_id,
@@ -117,7 +122,9 @@ def verify_signed_receipt(
 
     canonical_json = json.dumps(core_payload, sort_keys=True, separators=(",", ":"))
     expected_digest = hashlib.sha256(canonical_json.encode("utf-8")).hexdigest()
-    expected_signature = hmac.new(secret, canonical_json.encode("utf-8"), hashlib.sha256).hexdigest()
+    expected_signature = hmac.new(
+        secret, canonical_json.encode("utf-8"), hashlib.sha256
+    ).hexdigest()
 
     # Constant-time comparison to prevent timing attacks
     sig_valid = hmac.compare_digest(receipt.signature, expected_signature)

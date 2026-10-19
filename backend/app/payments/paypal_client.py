@@ -27,7 +27,7 @@ class PayPalOrderResponse(BaseModel):
 
 class PayPalClient:
     """PayPal REST API v2 Client for Sandbox Orders and Idempotent Captures.
-    
+
     Adheres strictly to PayPal Developer Guidelines:
     - Uses OAuth2 client_credentials token caching.
     - Sends PayPal-Request-Id on every mutating call for gateway idempotency.
@@ -45,10 +45,9 @@ class PayPalClient:
         self.client_id = client_id or os.getenv("PAYPAL_CLIENT_ID", "")
         self.client_secret = client_secret or os.getenv("PAYPAL_CLIENT_SECRET", "")
         self.base_url = (
-            base_url
-            or os.getenv("PAYPAL_BASE_URL", "https://api-m.sandbox.paypal.com")
+            base_url or os.getenv("PAYPAL_BASE_URL", "https://api-m.sandbox.paypal.com")
         ).rstrip("/")
-        
+
         # If credentials are not provided or mock_mode explicitly enabled, default to mock
         env_mock = os.getenv("PAYPAL_MOCK_MODE", "").lower() in ("true", "1", "yes")
         self.mock_mode = (
@@ -146,7 +145,18 @@ class PayPalClient:
         # convert to USD so PayPal Orders API accepts the order and matches frontend PayPal JS SDK.
         paypal_currency = proposal.currency
         conv_rate = 1.0
-        supported_currencies = {"USD", "EUR", "GBP", "CAD", "AUD", "SGD", "JPY", "CHF", "NZD", "HKD"}
+        supported_currencies = {
+            "USD",
+            "EUR",
+            "GBP",
+            "CAD",
+            "AUD",
+            "SGD",
+            "JPY",
+            "CHF",
+            "NZD",
+            "HKD",
+        }
         if paypal_currency not in supported_currencies:
             paypal_currency = "USD"
             conv_rate = 1.0 / 83.0 if proposal.currency == "INR" else 1.0
@@ -157,15 +167,17 @@ class PayPalClient:
         for item in proposal.items:
             unit_val = round(item.unit_price * conv_rate, 2)
             item_total_sum += round(unit_val * item.quantity, 2)
-            items_payload.append({
-                "name": item.name[:127],
-                "sku": item.sku[:127],
-                "quantity": str(item.quantity),
-                "unit_amount": {
-                    "currency_code": paypal_currency,
-                    "value": f"{unit_val:.2f}",
-                },
-            })
+            items_payload.append(
+                {
+                    "name": item.name[:127],
+                    "sku": item.sku[:127],
+                    "quantity": str(item.quantity),
+                    "unit_amount": {
+                        "currency_code": paypal_currency,
+                        "value": f"{unit_val:.2f}",
+                    },
+                }
+            )
 
         item_total_sum = round(item_total_sum, 2)
         shipping_val = round(proposal.shipping_fee * conv_rate, 2)
@@ -223,7 +235,9 @@ class PayPalClient:
                     )
                 except Exception:
                     err_msg = resp.text
-                raise RuntimeError(f"PayPal order creation rejected ({resp.status_code}): {err_msg}")
+                raise RuntimeError(
+                    f"PayPal order creation rejected ({resp.status_code}): {err_msg}"
+                )
             data = resp.json()
 
         return PayPalOrderResponse(
@@ -288,7 +302,9 @@ class PayPalClient:
                     )
                 except Exception:
                     err_msg = resp.text
-                raise RuntimeError(f"PayPal capture rejected ({resp.status_code}): {err_msg}")
+                raise RuntimeError(
+                    f"PayPal capture rejected ({resp.status_code}): {err_msg}"
+                )
             data = resp.json()
 
         # Extract capture id from purchase_units

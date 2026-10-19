@@ -1,4 +1,5 @@
 """Canonical proposal fingerprinting package."""
+
 from .canonical import (
     compute_proposal_fingerprint,
     get_fingerprint_diff,

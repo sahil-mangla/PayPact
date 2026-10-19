@@ -1,4 +1,5 @@
 """Domain models and Pydantic schemas for APIL."""
+
 from .schemas import (
     ApprovalRecord,
     AuditEvent,

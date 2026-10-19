@@ -22,6 +22,7 @@ from app.state.machine import TransactionCoordinator
 # 1. Arithmetic, Extreme Numbers & Floating Point Edge Cases
 # =====================================================================
 
+
 def test_nan_rejected_in_unit_price():
     with pytest.raises(ValidationError):
         LineItem(sku="SKU-1", name="Item", quantity=1, unit_price=float("nan"))
@@ -98,13 +99,16 @@ def test_sub_cent_floating_point_rounding_arithmetic():
 
 def test_huge_currency_amount_precision_safety():
     # 999 million
-    item = LineItem(sku="LUXURY-01", name="Luxury Jet", quantity=1, unit_price=999999999.99)
+    item = LineItem(
+        sku="LUXURY-01", name="Luxury Jet", quantity=1, unit_price=999999999.99
+    )
     assert item.unit_price == 999999999.99
 
 
 # =====================================================================
 # 2. String, Case, and Injection Sanitization
 # =====================================================================
+
 
 def test_non_alphabetic_currency_injection_rejected():
     item = LineItem(sku="SKU-1", name="Item", quantity=1, unit_price=10.00)
@@ -188,6 +192,7 @@ def test_identical_sku_multi_item_canonical_ordering():
 # 3. Concurrency & Race Condition Protection
 # =====================================================================
 
+
 @pytest.mark.asyncio
 async def test_concurrent_payment_execution_atomic_locking():
     """Simulate 5 simultaneous concurrent execution requests for the same checkout."""
@@ -219,10 +224,7 @@ async def test_concurrent_payment_execution_atomic_locking():
     assert session.state == TransactionState.AUTHORIZED
 
     # Fire 5 concurrent executions of the exact same checkout_id at the exact same millisecond
-    tasks = [
-        coord.execute_payment(session.checkout_id)
-        for _ in range(5)
-    ]
+    tasks = [coord.execute_payment(session.checkout_id) for _ in range(5)]
     results = await asyncio.gather(*tasks)
 
     # All 5 return gracefully
@@ -242,6 +244,7 @@ async def test_concurrent_payment_execution_atomic_locking():
 # =====================================================================
 # 4. Lifecycle Invalidation & Expiry Edge Cases
 # =====================================================================
+
 
 def test_policy_revoked_while_user_approval_pending():
     coord = TransactionCoordinator(paypal_client=PayPalClient(mock_mode=True))
@@ -370,6 +373,7 @@ def test_policy_expiry_boundary_conditions():
 # =====================================================================
 # 5. Cryptographic Audit Ledger Tamper Detection
 # =====================================================================
+
 
 def test_audit_ledger_detects_tampered_event_data():
     ledger = AuditLedger()

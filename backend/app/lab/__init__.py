@@ -1,4 +1,5 @@
 """Integrity Lab benchmark package."""
+
 from .benchmark import (
     BenchmarkReport,
     IntegrityLab,

@@ -1,23 +1,18 @@
 from __future__ import annotations
 
-import os
 from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from app.agent.shopper_agent import ShopperAgent
-from app.catalogue.products import CATALOGUE, Product, get_product_by_sku
+from app.catalogue.products import CATALOGUE, Product
 from app.lab.benchmark import (
-    BenchmarkReport,
     IntegrityLab,
     SCENARIO_DEFINITIONS,
     ScenarioDefinition,
-    ScenarioRunResult,
 )
 from app.models.schemas import (
-    AuditEvent,
     AuthorizationPolicy,
-    PolicyEvaluationResult,
     PurchaseProposal,
     SignedAuditReceipt,
 )
@@ -31,7 +26,9 @@ lab = IntegrityLab()
 
 
 class ParseIntentRequest(BaseModel):
-    prompt: str = Field(..., min_length=2, description="Natural language purchase request")
+    prompt: str = Field(
+        ..., min_length=2, description="Natural language purchase request"
+    )
     user_id: str = Field(default="usr_shopper", description="User identifier")
 
 
@@ -39,7 +36,9 @@ class CreateProposalRequest(BaseModel):
     prompt: str = Field(..., min_length=2)
     policy_id: str = Field(..., min_length=1)
     preferred_sku: Optional[str] = None
-    agent_id: Optional[str] = Field(default="agent_hardware", description="Agent persona ID in swarm")
+    agent_id: Optional[str] = Field(
+        default="agent_hardware", description="Agent persona ID in swarm"
+    )
 
 
 class SimulateWebhookRequest(BaseModel):
@@ -52,14 +51,14 @@ class SimulateWebhookRequest(BaseModel):
     reason: Optional[str] = None
 
 
-
 class ApproveProposalRequest(BaseModel):
     user_id: str = Field(default="usr_shopper")
 
 
 class ExecutePaymentRequest(BaseModel):
     simulate_drift_type: Optional[str] = Field(
-        None, description="Optional simulation: 'price_drift', 'sku_substitution', 'timeout'"
+        None,
+        description="Optional simulation: 'price_drift', 'sku_substitution', 'timeout'",
     )
     drift_shipping_fee: Optional[float] = None
     drift_sku: Optional[str] = None
@@ -67,12 +66,18 @@ class ExecutePaymentRequest(BaseModel):
 
 class CapturePaymentRequest(BaseModel):
     """Request to capture an already-approved PayPal order (used with PayPal JS SDK flow)."""
-    paypal_order_id: str = Field(..., description="The PayPal Order ID to capture (returned by createOrder callback)")
+
+    paypal_order_id: str = Field(
+        ...,
+        description="The PayPal Order ID to capture (returned by createOrder callback)",
+    )
 
 
 class LabRunRequest(BaseModel):
     scenario_id: Optional[str] = None
-    system_type: str = Field(default="PROPOSED_APIL")  # BASELINE_A, BASELINE_B, PROPOSED_APIL
+    system_type: str = Field(
+        default="PROPOSED_APIL"
+    )  # BASELINE_A, BASELINE_B, PROPOSED_APIL
 
 
 # ----------------------------------------------------
@@ -82,12 +87,15 @@ class LabRunRequest(BaseModel):
 async def health_check():
     is_mock = coordinator.paypal_client.mock_mode
     from app.agent.ollama_client import OllamaClient
+
     ollama_info = OllamaClient.check_health()
     return {
         "status": "healthy",
         "service": "Agent Payment Integrity Layer (APIL)",
         "paypal_mode": "mock" if is_mock else "live_sandbox",
-        "paypal_client_id": coordinator.paypal_client.client_id[:20] + "..." if not is_mock else None,
+        "paypal_client_id": coordinator.paypal_client.client_id[:20] + "..."
+        if not is_mock
+        else None,
         "ollama": ollama_info,
     }
 
@@ -96,8 +104,8 @@ async def health_check():
 async def get_agent_model_status():
     """Return local Ollama AI model availability and active configuration."""
     from app.agent.ollama_client import OllamaClient
-    return OllamaClient.check_health()
 
+    return OllamaClient.check_health()
 
 
 @router.get("/catalogue", response_model=List[Product])
@@ -143,7 +151,9 @@ async def revoke_policy(policy_id: str):
 async def create_proposal(req: CreateProposalRequest):
     policy = coordinator.get_policy(req.policy_id)
     if not policy:
-        raise HTTPException(status_code=404, detail=f"Policy '{req.policy_id}' not found.")
+        raise HTTPException(
+            status_code=404, detail=f"Policy '{req.policy_id}' not found."
+        )
 
     try:
         agent_res = ShopperAgent.generate_proposal(
@@ -180,28 +190,34 @@ async def approve_checkout(checkout_id: str, req: ApproveProposalRequest):
 async def execute_checkout(checkout_id: str, req: ExecutePaymentRequest):
     """
     Execute step 1: Runs pre-execution invariant gate, creates PayPal order.
-    
+
     In LIVE SANDBOX mode: returns the PayPal approve URL for the JS SDK to open.
     In MOCK mode: creates + captures inline and returns PAID state.
-    
+
     For drift/rejection scenarios, blocks immediately without creating an order.
     """
     session = coordinator.get_session(checkout_id)
     if not session:
-        raise HTTPException(status_code=404, detail=f"Checkout '{checkout_id}' not found.")
+        raise HTTPException(
+            status_code=404, detail=f"Checkout '{checkout_id}' not found."
+        )
 
     # Prepare live proposal if drift simulation requested
     live_proposal = session.proposal.model_copy(deep=True)
     if req.simulate_drift_type == "price_drift":
-        shipping = req.drift_shipping_fee if req.drift_shipping_fee is not None else 850.00
+        shipping = (
+            req.drift_shipping_fee if req.drift_shipping_fee is not None else 850.00
+        )
         live_proposal.shipping_fee = shipping
-        live_proposal.total_amount = round(live_proposal.item_subtotal + shipping + live_proposal.tax_fee, 2)
+        live_proposal.total_amount = round(
+            live_proposal.item_subtotal + shipping + live_proposal.tax_fee, 2
+        )
     elif req.simulate_drift_type == "sku_substitution":
         sub_sku = req.drift_sku or "KB-SUBSTITUTED-CHEAP"
         live_proposal.items[0].sku = sub_sku
         live_proposal.items[0].name = "Substituted SKU"
 
-    sim_timeout = (req.simulate_drift_type == "timeout")
+    sim_timeout = req.simulate_drift_type == "timeout"
 
     is_mock = coordinator.paypal_client.mock_mode
 
@@ -210,7 +226,9 @@ async def execute_checkout(checkout_id: str, req: ExecutePaymentRequest):
             # Mock mode: full inline create + capture (original behavior)
             updated_session = await coordinator.execute_payment(
                 checkout_id=checkout_id,
-                current_proposal_state=live_proposal if req.simulate_drift_type else None,
+                current_proposal_state=live_proposal
+                if req.simulate_drift_type
+                else None,
                 simulate_timeout=sim_timeout,
             )
             return {
@@ -223,7 +241,9 @@ async def execute_checkout(checkout_id: str, req: ExecutePaymentRequest):
             # Live sandbox: run policy gate + create order only, return approve URL
             updated_session = await coordinator.create_paypal_order_only(
                 checkout_id=checkout_id,
-                current_proposal_state=live_proposal if req.simulate_drift_type else None,
+                current_proposal_state=live_proposal
+                if req.simulate_drift_type
+                else None,
                 simulate_timeout=sim_timeout,
             )
 
@@ -261,7 +281,9 @@ async def capture_checkout(checkout_id: str, req: CapturePaymentRequest):
     """
     session = coordinator.get_session(checkout_id)
     if not session:
-        raise HTTPException(status_code=404, detail=f"Checkout '{checkout_id}' not found.")
+        raise HTTPException(
+            status_code=404, detail=f"Checkout '{checkout_id}' not found."
+        )
 
     try:
         updated_session = await coordinator.capture_approved_order(
@@ -302,6 +324,7 @@ async def get_checkout_receipt(checkout_id: str):
 async def get_sample_receipt():
     """Return an authentic cryptographically signed sample receipt for verifier testing."""
     from app.crypto.receipts import generate_signed_receipt
+
     return generate_signed_receipt(
         checkout_id="chk_demo_sample_receipt",
         decision="ALLOW",
@@ -323,6 +346,7 @@ async def get_sample_receipt():
 async def verify_receipt_endpoint(receipt: SignedAuditReceipt):
     """Verify cryptographic authenticity and tamper-resistance of a SignedAuditReceipt."""
     from app.crypto.receipts import verify_signed_receipt
+
     is_valid = verify_signed_receipt(receipt)
     return {
         "valid": is_valid,
@@ -356,12 +380,17 @@ async def simulate_paypal_webhook(req: SimulateWebhookRequest):
     """Interactive webhook simulation for local demos and Integrity Lab."""
     session = coordinator.get_session(req.checkout_id)
     if not session:
-        raise HTTPException(status_code=404, detail=f"Checkout '{req.checkout_id}' not found.")
+        raise HTTPException(
+            status_code=404, detail=f"Checkout '{req.checkout_id}' not found."
+        )
 
     refund_amount = req.amount or session.proposal.total_amount
     simulated_resource = {
         "id": session.paypal_capture_id or f"SIM-CAP-{req.checkout_id}",
-        "amount": {"value": f"{refund_amount:.2f}", "currency_code": session.proposal.currency},
+        "amount": {
+            "value": f"{refund_amount:.2f}",
+            "currency_code": session.proposal.currency,
+        },
     }
     updated = await coordinator.process_webhook_event(
         event_type=req.event_type,
@@ -398,7 +427,6 @@ async def get_swarm_personas():
             "description": "Agent for recurring workplace supplies, cables, and ergonomic accessories.",
         },
     ]
-
 
 
 # ----------------------------------------------------

@@ -11,20 +11,27 @@ def normalize_items_for_fingerprint(items: List[LineItem]) -> List[Dict[str, Any
     # Multi-key sorting guarantees 100% deterministic order even with duplicate SKUs
     for item in sorted(
         items,
-        key=lambda x: (x.sku.strip(), f"{x.unit_price:.2f}", x.name.strip(), x.quantity),
+        key=lambda x: (
+            x.sku.strip(),
+            f"{x.unit_price:.2f}",
+            x.name.strip(),
+            x.quantity,
+        ),
     ):
-        normalized.append({
-            "sku": item.sku.strip(),
-            "name": item.name.strip(),
-            "quantity": item.quantity,
-            "unit_price": f"{item.unit_price:.2f}",
-        })
+        normalized.append(
+            {
+                "sku": item.sku.strip(),
+                "name": item.name.strip(),
+                "quantity": item.quantity,
+                "unit_price": f"{item.unit_price:.2f}",
+            }
+        )
     return normalized
 
 
 def normalize_proposal_for_fingerprint(proposal: PurchaseProposal) -> Dict[str, Any]:
     """Produce a canonical normalized dictionary representation of a proposal.
-    
+
     Any variation in merchant, currency, line items, taxes, or total will alter
     this dictionary and thus change the resulting SHA-256 fingerprint.
     """
@@ -49,7 +56,9 @@ def compute_proposal_fingerprint(proposal: PurchaseProposal) -> str:
     return hashlib.sha256(canonical_json.encode("utf-8")).hexdigest()
 
 
-def verify_proposal_fingerprint(proposal: PurchaseProposal, expected_fingerprint: str) -> bool:
+def verify_proposal_fingerprint(
+    proposal: PurchaseProposal, expected_fingerprint: str
+) -> bool:
     """Verify whether a proposal matches an expected canonical fingerprint (constant-time)."""
     if not expected_fingerprint:
         return False

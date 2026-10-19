@@ -143,11 +143,37 @@ def get_product_by_sku(sku: str) -> Optional[Product]:
     return None
 
 
-def search_catalogue(query: str, category_filter: Optional[str] = None, max_results: int = 5) -> List[Product]:
+def search_catalogue(
+    query: str, category_filter: Optional[str] = None, max_results: int = 5
+) -> List[Product]:
     import re
+
     q = query.lower()
-    stop_words = {"a", "an", "the", "under", "for", "to", "find", "book", "order", "search", "with", "and", "in", "of", "please", "suitable", "want", "need"}
-    raw_tokens = [w for w in re.findall(r"\w+", q) if w not in stop_words and len(w) > 2 and not w.isdigit()]
+    stop_words = {
+        "a",
+        "an",
+        "the",
+        "under",
+        "for",
+        "to",
+        "find",
+        "book",
+        "order",
+        "search",
+        "with",
+        "and",
+        "in",
+        "of",
+        "please",
+        "suitable",
+        "want",
+        "need",
+    }
+    raw_tokens = [
+        w
+        for w in re.findall(r"\w+", q)
+        if w not in stop_words and len(w) > 2 and not w.isdigit()
+    ]
 
     # Synonym and stemming expansions
     SYNONYM_MAP = {
@@ -158,7 +184,14 @@ def search_catalogue(query: str, category_filter: Optional[str] = None, max_resu
         "delhi": ["del", "new delhi", "delhi"],
         "hotel": ["hotel", "stay", "room", "chancery", "marriott", "travel"],
         "hotels": ["hotel", "stay", "room", "chancery", "marriott", "travel"],
-        "keyboard": ["keyboard", "mechanical", "keychron", "typing", "switch", "switches"],
+        "keyboard": [
+            "keyboard",
+            "mechanical",
+            "keychron",
+            "typing",
+            "switch",
+            "switches",
+        ],
         "keyboards": ["keyboard", "mechanical", "keychron", "switch"],
         "mat": ["desk mat", "felt", "wrist rest", "office supplies"],
         "dock": ["organizer", "dock", "aluminum", "office supplies"],
@@ -209,9 +242,13 @@ def search_catalogue(query: str, category_filter: Optional[str] = None, max_resu
         return [p for _, p in scored[:max_results]]
 
     if category_filter:
-        cat_matches = [p for p in CATALOGUE if category_filter.lower() in p.category.lower() or p.category.lower() in category_filter.lower()]
+        cat_matches = [
+            p
+            for p in CATALOGUE
+            if category_filter.lower() in p.category.lower()
+            or p.category.lower() in category_filter.lower()
+        ]
         if cat_matches:
             return cat_matches[:max_results]
 
     return CATALOGUE[:max_results]
-

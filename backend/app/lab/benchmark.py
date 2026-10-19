@@ -2,22 +2,21 @@ from __future__ import annotations
 
 import time
 import uuid
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 from pydantic import BaseModel, Field
 
 from app.audit.ledger import AuditLedger
-from app.catalogue.products import CATALOGUE, get_product_by_sku
+from app.catalogue.products import get_product_by_sku
 from app.fingerprint.canonical import compute_proposal_fingerprint
 from app.models.schemas import (
     AuthorizationPolicy,
     LineItem,
-    PolicyDecisionType,
     PurchaseProposal,
     TransactionState,
 )
 from app.payments.paypal_client import PayPalClient
 from app.policy.engine import DeterministicPolicyEngine
-from app.state.machine import CheckoutSession, TransactionCoordinator
+from app.state.machine import TransactionCoordinator
 
 
 class ScenarioDefinition(BaseModel):
@@ -134,11 +133,15 @@ class IntegrityLab:
         start_time = time.time()
         policy = self._get_base_policy()
         ledger = AuditLedger()
-        coord = TransactionCoordinator(paypal_client=self.paypal_mock, audit_ledger=ledger)
+        coord = TransactionCoordinator(
+            paypal_client=self.paypal_mock, audit_ledger=ledger
+        )
         coord.register_policy(policy)
 
         run_id = f"run_{uuid.uuid4().hex[:8]}"
-        sc_def = next((s for s in SCENARIO_DEFINITIONS if s.scenario_id == scenario_id), None)
+        sc_def = next(
+            (s for s in SCENARIO_DEFINITIONS if s.scenario_id == scenario_id), None
+        )
         sc_name = sc_def.name if sc_def else scenario_id
 
         # Prepare baseline-specific execution
@@ -150,7 +153,14 @@ class IntegrityLab:
                 policy_id=policy.policy_id,
                 policy_version=policy.version,
                 merchant=prod.merchant,
-                items=[LineItem(sku=prod.sku, name=prod.name, quantity=1, unit_price=prod.unit_price)],
+                items=[
+                    LineItem(
+                        sku=prod.sku,
+                        name=prod.name,
+                        quantity=1,
+                        unit_price=prod.unit_price,
+                    )
+                ],
                 item_subtotal=prod.unit_price,
                 shipping_fee=0.00,
                 tax_fee=0.00,
@@ -163,14 +173,14 @@ class IntegrityLab:
             if system_type == "BASELINE_A":
                 # Baseline A bypasses all policy checks
                 order_resp = await coord.paypal_client.create_order(proposal)
-                captured = await coord.paypal_client.capture_order(order_resp.order_id)
+                await coord.paypal_client.capture_order(order_resp.order_id)
                 session.state = TransactionState.PAID
                 reason = "Payment executed without policy check."
                 protect_success = True
             else:
                 session = await coord.execute_payment(session.checkout_id)
                 reason = "Nominal transaction completed successfully."
-                protect_success = (session.state == TransactionState.PAID)
+                protect_success = session.state == TransactionState.PAID
 
             return ScenarioRunResult(
                 run_id=run_id,
@@ -197,14 +207,20 @@ class IntegrityLab:
                 policy_id=policy.policy_id,
                 policy_version=policy.version,
                 merchant=prod.merchant,
-                items=[LineItem(sku=prod.sku, name=prod.name, quantity=1, unit_price=3800.00)],
+                items=[
+                    LineItem(
+                        sku=prod.sku, name=prod.name, quantity=1, unit_price=3800.00
+                    )
+                ],
                 item_subtotal=3800.00,
                 shipping_fee=0.00,
                 tax_fee=0.00,
                 total_amount=3800.00,
                 currency="INR",
             )
-            proposal_initial.proposal_fingerprint = compute_proposal_fingerprint(proposal_initial)
+            proposal_initial.proposal_fingerprint = compute_proposal_fingerprint(
+                proposal_initial
+            )
 
             # Drifted live state at checkout
             proposal_drifted = PurchaseProposal(
@@ -212,14 +228,20 @@ class IntegrityLab:
                 policy_id=policy.policy_id,
                 policy_version=policy.version,
                 merchant=prod.merchant,
-                items=[LineItem(sku=prod.sku, name=prod.name, quantity=1, unit_price=3800.00)],
+                items=[
+                    LineItem(
+                        sku=prod.sku, name=prod.name, quantity=1, unit_price=3800.00
+                    )
+                ],
                 item_subtotal=3800.00,
                 shipping_fee=850.00,
                 tax_fee=0.00,
                 total_amount=4650.00,
                 currency="INR",
             )
-            proposal_drifted.proposal_fingerprint = compute_proposal_fingerprint(proposal_drifted)
+            proposal_drifted.proposal_fingerprint = compute_proposal_fingerprint(
+                proposal_drifted
+            )
 
             if system_type == "BASELINE_A":
                 # No gate: executes drifted price without warning
@@ -242,7 +264,7 @@ class IntegrityLab:
                 )
             elif system_type == "BASELINE_B":
                 # Naive static gate: checked 3800 initially (passed), but missed checkout drift!
-                eval_initial = DeterministicPolicyEngine.evaluate(proposal_initial, policy)
+                _ = DeterministicPolicyEngine.evaluate(proposal_initial, policy)
                 # Static gate said ALLOW at 3800, then executes live drifted 4650!
                 await coord.paypal_client.create_order(proposal_drifted)
                 return ScenarioRunResult(
@@ -279,7 +301,8 @@ class IntegrityLab:
                     drift_detected=True,
                     duplicate_blocked=False,
                     protection_successful=True,  # Successfully protected!
-                    primary_reason=session.failure_reason or "Price drift intercepted at pre-execution gate.",
+                    primary_reason=session.failure_reason
+                    or "Price drift intercepted at pre-execution gate.",
                     execution_time_ms=round((time.time() - start_time) * 1000, 2),
                     audit_events_count=len(ledger.get_events()),
                     evidence={"initial_total": 3800.00, "drifted_total": 4650.00},
@@ -293,7 +316,14 @@ class IntegrityLab:
                 policy_id=policy.policy_id,
                 policy_version=policy.version,
                 merchant=prod.merchant,
-                items=[LineItem(sku=prod.sku, name=prod.name, quantity=1, unit_price=prod.unit_price)],
+                items=[
+                    LineItem(
+                        sku=prod.sku,
+                        name=prod.name,
+                        quantity=1,
+                        unit_price=prod.unit_price,
+                    )
+                ],
                 item_subtotal=prod.unit_price,
                 shipping_fee=0.00,
                 tax_fee=0.00,
@@ -338,7 +368,8 @@ class IntegrityLab:
                     drift_detected=True,
                     duplicate_blocked=False,
                     protection_successful=True,
-                    primary_reason=session.failure_reason or "Revoked policy blocked at pre-execution gate.",
+                    primary_reason=session.failure_reason
+                    or "Revoked policy blocked at pre-execution gate.",
                     execution_time_ms=round((time.time() - start_time) * 1000, 2),
                     audit_events_count=len(ledger.get_events()),
                     evidence={"revoked": True},
@@ -352,14 +383,23 @@ class IntegrityLab:
                 policy_id=policy.policy_id,
                 policy_version=policy.version,
                 merchant=prod.merchant,
-                items=[LineItem(sku=prod.sku, name=prod.name, quantity=1, unit_price=prod.unit_price)],
+                items=[
+                    LineItem(
+                        sku=prod.sku,
+                        name=prod.name,
+                        quantity=1,
+                        unit_price=prod.unit_price,
+                    )
+                ],
                 item_subtotal=prod.unit_price,
                 shipping_fee=0.00,
                 tax_fee=0.00,
                 total_amount=prod.unit_price,
                 currency="INR",
             )
-            proposal_approved.proposal_fingerprint = compute_proposal_fingerprint(proposal_approved)
+            proposal_approved.proposal_fingerprint = compute_proposal_fingerprint(
+                proposal_approved
+            )
 
             # Substituted product
             proposal_sub = PurchaseProposal(
@@ -367,14 +407,23 @@ class IntegrityLab:
                 policy_id=policy.policy_id,
                 policy_version=policy.version,
                 merchant=prod.merchant,
-                items=[LineItem(sku="KB-Q1-CHEAP-SWITCH", name="Cheap Switch Substitute", quantity=1, unit_price=prod.unit_price)],
+                items=[
+                    LineItem(
+                        sku="KB-Q1-CHEAP-SWITCH",
+                        name="Cheap Switch Substitute",
+                        quantity=1,
+                        unit_price=prod.unit_price,
+                    )
+                ],
                 item_subtotal=prod.unit_price,
                 shipping_fee=0.00,
                 tax_fee=0.00,
                 total_amount=prod.unit_price,
                 currency="INR",
             )
-            proposal_sub.proposal_fingerprint = compute_proposal_fingerprint(proposal_sub)
+            proposal_sub.proposal_fingerprint = compute_proposal_fingerprint(
+                proposal_sub
+            )
 
             session = coord.create_proposal_session(proposal_approved, policy)
             # Explicit user approval for exact approved fingerprint
@@ -401,7 +450,9 @@ class IntegrityLab:
                 )
             else:
                 # APIL checks approved_fingerprint vs current_fingerprint
-                session = await coord.execute_payment(session.checkout_id, current_proposal_state=proposal_sub)
+                session = await coord.execute_payment(
+                    session.checkout_id, current_proposal_state=proposal_sub
+                )
                 return ScenarioRunResult(
                     run_id=run_id,
                     scenario_id=scenario_id,
@@ -413,7 +464,8 @@ class IntegrityLab:
                     drift_detected=True,
                     duplicate_blocked=False,
                     protection_successful=True,
-                    primary_reason=session.failure_reason or "Substituted SKU caught by fingerprint mismatch.",
+                    primary_reason=session.failure_reason
+                    or "Substituted SKU caught by fingerprint mismatch.",
                     execution_time_ms=round((time.time() - start_time) * 1000, 2),
                     audit_events_count=len(ledger.get_events()),
                     evidence={"approved_fp": session.approved_fingerprint[:12]},
@@ -427,7 +479,14 @@ class IntegrityLab:
                 policy_id=policy.policy_id,
                 policy_version=policy.version,
                 merchant=prod.merchant,
-                items=[LineItem(sku=prod.sku, name=prod.name, quantity=1, unit_price=prod.unit_price)],
+                items=[
+                    LineItem(
+                        sku=prod.sku,
+                        name=prod.name,
+                        quantity=1,
+                        unit_price=prod.unit_price,
+                    )
+                ],
                 item_subtotal=prod.unit_price,
                 shipping_fee=0.00,
                 tax_fee=0.00,
@@ -441,7 +500,9 @@ class IntegrityLab:
             if system_type == "BASELINE_A":
                 # Blind retry charges twice
                 await coord.paypal_client.create_order(proposal)
-                await coord.paypal_client.create_order(proposal)  # Double create/charge!
+                await coord.paypal_client.create_order(
+                    proposal
+                )  # Double create/charge!
                 return ScenarioRunResult(
                     run_id=run_id,
                     scenario_id=scenario_id,
@@ -489,7 +550,14 @@ class IntegrityLab:
                 policy_id=policy.policy_id,
                 policy_version=policy.version,
                 merchant=prod.merchant,
-                items=[LineItem(sku=prod.sku, name="Enterprise Gold Keyboard", quantity=1, unit_price=14500.00)],
+                items=[
+                    LineItem(
+                        sku=prod.sku,
+                        name="Enterprise Gold Keyboard",
+                        quantity=1,
+                        unit_price=14500.00,
+                    )
+                ],
                 item_subtotal=14500.00,
                 shipping_fee=0.00,
                 tax_fee=0.00,
@@ -531,7 +599,8 @@ class IntegrityLab:
                     drift_detected=False,
                     duplicate_blocked=False,
                     protection_successful=True,
-                    primary_reason=session.failure_reason or "Deterministic policy rejected proposal: exceeds maximum budget ceiling.",
+                    primary_reason=session.failure_reason
+                    or "Deterministic policy rejected proposal: exceeds maximum budget ceiling.",
                     execution_time_ms=round((time.time() - start_time) * 1000, 2),
                     audit_events_count=len(ledger.get_events()),
                     evidence={"injected_amount": 14500.00, "budget_limit": 5000.00},
@@ -545,7 +614,14 @@ class IntegrityLab:
                 policy_id=policy.policy_id,
                 policy_version=policy.version,
                 merchant=prod.merchant,
-                items=[LineItem(sku=prod.sku, name=prod.name, quantity=1, unit_price=prod.unit_price)],
+                items=[
+                    LineItem(
+                        sku=prod.sku,
+                        name=prod.name,
+                        quantity=1,
+                        unit_price=prod.unit_price,
+                    )
+                ],
                 item_subtotal=prod.unit_price,
                 shipping_fee=0.00,
                 tax_fee=0.00,
@@ -575,7 +651,9 @@ class IntegrityLab:
                 )
             else:
                 # Simulate ambiguous timeout
-                session = await coord.execute_payment(session.checkout_id, simulate_timeout=True)
+                session = await coord.execute_payment(
+                    session.checkout_id, simulate_timeout=True
+                )
                 assert session.state == TransactionState.RECONCILIATION_REQUIRED
                 # Reconcile safely
                 reconciled = await coord.reconcile_timeout(session.checkout_id)
@@ -615,9 +693,15 @@ class IntegrityLab:
             total = len(sys_res)
             passed = sum(1 for r in sys_res if r.protection_successful)
             unauthorized_spend = sum(
-                1 for r in sys_res if not r.protection_successful and r.allowed_payment and r.scenario_id != "SC-A"
+                1
+                for r in sys_res
+                if not r.protection_successful
+                and r.allowed_payment
+                and r.scenario_id != "SC-A"
             )
-            avg_time = sum(r.execution_time_ms for r in sys_res) / total if total else 0.0
+            avg_time = (
+                sum(r.execution_time_ms for r in sys_res) / total if total else 0.0
+            )
 
             summary[sys_name] = {
                 "total_scenarios": total,

@@ -31,12 +31,22 @@ class TransactionState(str, Enum):
 
 
 class AgentQuota(BaseModel):
-    agent_id: str = Field(..., min_length=1, description="Identifier for this agent persona")
+    agent_id: str = Field(
+        ..., min_length=1, description="Identifier for this agent persona"
+    )
     agent_name: str = Field(..., min_length=1, description="Display name for the agent")
-    role: str = Field(..., description="Role of the agent (e.g. Hardware, Travel, Supplies)")
-    allocated_budget: float = Field(..., gt=0.0, description="Maximum budget allocated to this agent")
-    spent_budget: float = Field(default=0.0, ge=0.0, description="Amount already captured by this agent")
-    is_active: bool = Field(default=True, description="Whether this agent is authorized to submit proposals")
+    role: str = Field(
+        ..., description="Role of the agent (e.g. Hardware, Travel, Supplies)"
+    )
+    allocated_budget: float = Field(
+        ..., gt=0.0, description="Maximum budget allocated to this agent"
+    )
+    spent_budget: float = Field(
+        default=0.0, ge=0.0, description="Amount already captured by this agent"
+    )
+    is_active: bool = Field(
+        default=True, description="Whether this agent is authorized to submit proposals"
+    )
 
     @property
     def remaining_budget(self) -> float:
@@ -58,26 +68,50 @@ class LineItem(BaseModel):
 
 
 class AuthorizationPolicy(BaseModel):
-    policy_id: str = Field(..., min_length=1, description="Unique authorization policy ID")
+    policy_id: str = Field(
+        ..., min_length=1, description="Unique authorization policy ID"
+    )
     version: int = Field(..., ge=1, description="Policy revision number, starts at 1")
-    user_id: str = Field(..., min_length=1, description="User who confirmed this authorization")
-    product_category: Optional[str] = Field(None, description="Allowed product category (e.g. mechanical keyboard)")
-    maximum_total: float = Field(..., gt=0.0, description="Absolute ceiling budget across line items, tax, and shipping")
-    spent_total: float = Field(default=0.0, ge=0.0, description="Cumulative spend across all agents under this policy")
+    user_id: str = Field(
+        ..., min_length=1, description="User who confirmed this authorization"
+    )
+    product_category: Optional[str] = Field(
+        None, description="Allowed product category (e.g. mechanical keyboard)"
+    )
+    maximum_total: float = Field(
+        ...,
+        gt=0.0,
+        description="Absolute ceiling budget across line items, tax, and shipping",
+    )
+    spent_total: float = Field(
+        default=0.0,
+        ge=0.0,
+        description="Cumulative spend across all agents under this policy",
+    )
     automatic_purchase_limit: float = Field(
-        ..., ge=0.0, description="Maximum amount that can be purchased automatically without explicit approval"
+        ...,
+        ge=0.0,
+        description="Maximum amount that can be purchased automatically without explicit approval",
     )
     allowed_currencies: List[str] = Field(default_factory=lambda: ["USD", "INR"])
-    allowed_merchants: Optional[List[str]] = Field(None, description="Whitelist of allowed merchants/vendors")
-    require_approval_above_limit: bool = Field(
-        default=True, description="Whether exceeding automatic_purchase_limit routes to approval instead of reject"
+    allowed_merchants: Optional[List[str]] = Field(
+        None, description="Whitelist of allowed merchants/vendors"
     )
-    is_revoked: bool = Field(default=False, description="Whether the user revoked this authorization")
+    require_approval_above_limit: bool = Field(
+        default=True,
+        description="Whether exceeding automatic_purchase_limit routes to approval instead of reject",
+    )
+    is_revoked: bool = Field(
+        default=False, description="Whether the user revoked this authorization"
+    )
     agent_quotas: dict[str, AgentQuota] = Field(
-        default_factory=dict, description="Granular budget quotas assigned per agent persona in swarm"
+        default_factory=dict,
+        description="Granular budget quotas assigned per agent persona in swarm",
     )
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    expires_at: Optional[datetime] = Field(None, description="Optional expiry timestamp")
+    expires_at: Optional[datetime] = Field(
+        None, description="Optional expiry timestamp"
+    )
 
     @field_validator("maximum_total", "automatic_purchase_limit")
     @classmethod
@@ -91,24 +125,42 @@ class AuthorizationPolicy(BaseModel):
     def validate_auto_limit_lte_max(cls, v: float, info) -> float:
         max_total = info.data.get("maximum_total")
         if max_total is not None and v > max_total:
-            raise ValueError(f"automatic_purchase_limit ({v}) cannot exceed maximum_total ({max_total})")
+            raise ValueError(
+                f"automatic_purchase_limit ({v}) cannot exceed maximum_total ({max_total})"
+            )
         return v
 
 
 class PurchaseProposal(BaseModel):
-    proposal_id: str = Field(..., min_length=1, description="Unique proposal identifier")
-    policy_id: str = Field(..., min_length=1, description="ID of policy this proposal is evaluated against")
-    policy_version: int = Field(..., ge=1, description="Policy version this proposal was prepared under")
-    agent_id: Optional[str] = Field(default="agent_hardware", description="Agent persona that originated this proposal")
+    proposal_id: str = Field(
+        ..., min_length=1, description="Unique proposal identifier"
+    )
+    policy_id: str = Field(
+        ..., min_length=1, description="ID of policy this proposal is evaluated against"
+    )
+    policy_version: int = Field(
+        ..., ge=1, description="Policy version this proposal was prepared under"
+    )
+    agent_id: Optional[str] = Field(
+        default="agent_hardware",
+        description="Agent persona that originated this proposal",
+    )
     merchant: str = Field(..., min_length=1, description="Merchant or vendor name")
-    items: List[LineItem] = Field(..., min_length=1, description="Line items to be purchased")
+    items: List[LineItem] = Field(
+        ..., min_length=1, description="Line items to be purchased"
+    )
     item_subtotal: float = Field(..., ge=0.0, description="Sum of line item totals")
     shipping_fee: float = Field(default=0.0, ge=0.0, description="Shipping fee")
     tax_fee: float = Field(default=0.0, ge=0.0, description="Tax amount")
-    total_amount: float = Field(..., gt=0.0, description="Calculated final total = subtotal + shipping + tax")
-    currency: str = Field(..., min_length=3, max_length=3, description="ISO 4217 Currency code")
+    total_amount: float = Field(
+        ..., gt=0.0, description="Calculated final total = subtotal + shipping + tax"
+    )
+    currency: str = Field(
+        ..., min_length=3, max_length=3, description="ISO 4217 Currency code"
+    )
     proposal_fingerprint: Optional[str] = Field(
-        None, description="Canonical SHA-256 fingerprint generated over the proposal data"
+        None,
+        description="Canonical SHA-256 fingerprint generated over the proposal data",
     )
 
     @field_validator("item_subtotal", "shipping_fee", "tax_fee", "total_amount")
@@ -123,7 +175,9 @@ class PurchaseProposal(BaseModel):
     def uppercase_currency(cls, v: str) -> str:
         clean = v.strip().upper()
         if not clean.isalpha() or len(clean) != 3:
-            raise ValueError(f"Currency must be a 3-letter alphabetic code (e.g. USD, INR), got '{v}'")
+            raise ValueError(
+                f"Currency must be a 3-letter alphabetic code (e.g. USD, INR), got '{v}'"
+            )
         return clean
 
 
@@ -197,4 +251,3 @@ class PayPalWebhookEvent(BaseModel):
     resource_type: Optional[str] = None
     resource: dict[str, Any]
     summary: Optional[str] = None
-

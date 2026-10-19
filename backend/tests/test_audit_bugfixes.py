@@ -1,6 +1,6 @@
 import pytest
 from app.agent.shopper_agent import ShopperAgent
-from app.models.schemas import LineItem, PurchaseProposal, TransactionState
+from app.models.schemas import PurchaseProposal, TransactionState
 from app.policy.engine import DeterministicPolicyEngine, PolicyDecisionType
 from app.payments.paypal_client import PayPalClient
 from app.state.machine import TransactionCoordinator
@@ -29,9 +29,16 @@ async def test_travel_agent_intent_and_proposal():
 
     # 4. Deterministic policy evaluation must pass merchant and quota checks
     eval_res = DeterministicPolicyEngine.evaluate(proposal, policy)
-    assert eval_res.decision in (PolicyDecisionType.ALLOW, PolicyDecisionType.REQUIRE_APPROVAL)
+    assert eval_res.decision in (
+        PolicyDecisionType.ALLOW,
+        PolicyDecisionType.REQUIRE_APPROVAL,
+    )
     for check in eval_res.checks:
-        if check.check_name in ("merchant_check", "agent_quota_check", "maximum_budget_check"):
+        if check.check_name in (
+            "merchant_check",
+            "agent_quota_check",
+            "maximum_budget_check",
+        ):
             assert check.passed is True
 
 
@@ -56,7 +63,9 @@ async def test_reconcile_timeout_spend_accounting():
     policy = ShopperAgent.parse_intent_to_policy("Test keyboard under 5000")
     coord.register_policy(policy)
 
-    res = ShopperAgent.generate_proposal("Test keyboard under 5000", policy, preferred_sku="KB-K2-V2-RGB")
+    res = ShopperAgent.generate_proposal(
+        "Test keyboard under 5000", policy, preferred_sku="KB-K2-V2-RGB"
+    )
     session = coord.create_proposal_session(res["proposal"], policy)
 
     # Simulate ambiguous timeout during execute
@@ -65,8 +74,12 @@ async def test_reconcile_timeout_spend_accounting():
     assert policy.spent_total == 0.0
 
     # Simulate that PayPal actually captured the order before the network dropped
-    coord.paypal_client._mock_orders_store[session.paypal_order_id]["status"] = "COMPLETED"
-    coord.paypal_client._mock_orders_store[session.paypal_order_id]["capture_id"] = "MOCK-CAP-RECON-01"
+    coord.paypal_client._mock_orders_store[session.paypal_order_id]["status"] = (
+        "COMPLETED"
+    )
+    coord.paypal_client._mock_orders_store[session.paypal_order_id]["capture_id"] = (
+        "MOCK-CAP-RECON-01"
+    )
 
     # Reconcile timeout
     reconciled = await coord.reconcile_timeout(session.checkout_id)
@@ -74,7 +87,10 @@ async def test_reconcile_timeout_spend_accounting():
 
     # Spend MUST be recorded
     assert policy.spent_total == res["proposal"].total_amount
-    assert policy.agent_quotas["agent_hardware"].spent_budget == res["proposal"].total_amount
+    assert (
+        policy.agent_quotas["agent_hardware"].spent_budget
+        == res["proposal"].total_amount
+    )
 
 
 @pytest.mark.asyncio
@@ -83,11 +99,15 @@ async def test_live_sandbox_timeout_simulation():
     policy = ShopperAgent.parse_intent_to_policy("Test keyboard under 5000")
     coord.register_policy(policy)
 
-    res = ShopperAgent.generate_proposal("Test keyboard under 5000", policy, preferred_sku="KB-K2-V2-RGB")
+    res = ShopperAgent.generate_proposal(
+        "Test keyboard under 5000", policy, preferred_sku="KB-K2-V2-RGB"
+    )
     session = coord.create_proposal_session(res["proposal"], policy)
 
     # create_paypal_order_only with simulate_timeout=True
-    updated = await coord.create_paypal_order_only(session.checkout_id, simulate_timeout=True)
+    updated = await coord.create_paypal_order_only(
+        session.checkout_id, simulate_timeout=True
+    )
     assert updated.state == TransactionState.RECONCILIATION_REQUIRED
     assert "timeout" in (updated.failure_reason or "").lower()
 
@@ -98,7 +118,9 @@ async def test_webhook_null_amount_resilience():
     policy = ShopperAgent.parse_intent_to_policy("Test keyboard under 5000")
     coord.register_policy(policy)
 
-    res = ShopperAgent.generate_proposal("Test keyboard under 5000", policy, preferred_sku="KB-K2-V2-RGB")
+    res = ShopperAgent.generate_proposal(
+        "Test keyboard under 5000", policy, preferred_sku="KB-K2-V2-RGB"
+    )
     session = coord.create_proposal_session(res["proposal"], policy)
     session = await coord.execute_payment(session.checkout_id)
     assert session.state == TransactionState.PAID

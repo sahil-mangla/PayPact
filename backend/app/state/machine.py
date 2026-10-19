@@ -59,7 +59,10 @@ class TransactionCoordinator:
             event_type="POLICY_REGISTERED",
             policy_version=policy.version,
             reason=f"Policy {policy.policy_id} registered (v{policy.version})",
-            metadata={"maximum_total": policy.maximum_total, "auto_limit": policy.automatic_purchase_limit},
+            metadata={
+                "maximum_total": policy.maximum_total,
+                "auto_limit": policy.automatic_purchase_limit,
+            },
         )
         return policy
 
@@ -125,7 +128,9 @@ class TransactionCoordinator:
             policy_version=policy.version,
             proposal=proposal,
             state=state,
-            failure_reason=eval_result.primary_reason if state == TransactionState.POLICY_REJECTED else None,
+            failure_reason=eval_result.primary_reason
+            if state == TransactionState.POLICY_REJECTED
+            else None,
         )
 
         self._sessions[checkout_id] = session
@@ -152,12 +157,17 @@ class TransactionCoordinator:
         if not session:
             raise ValueError(f"Checkout '{checkout_id}' not found.")
 
-        if session.state not in (TransactionState.AWAITING_APPROVAL, TransactionState.AUTHORIZED):
+        if session.state not in (
+            TransactionState.AWAITING_APPROVAL,
+            TransactionState.AUTHORIZED,
+        ):
             raise ValueError(
                 f"Cannot approve checkout in state '{session.state}'. Must be AWAITING_APPROVAL or AUTHORIZED."
             )
 
-        fp = session.proposal.proposal_fingerprint or compute_proposal_fingerprint(session.proposal)
+        fp = session.proposal.proposal_fingerprint or compute_proposal_fingerprint(
+            session.proposal
+        )
         record = ApprovalRecord(
             approval_id=f"appr_{uuid.uuid4().hex[:8]}",
             proposal_id=session.proposal.proposal_id,
@@ -205,7 +215,9 @@ class TransactionCoordinator:
 
             # Verify state is AUTHORIZED
             if session.state != TransactionState.AUTHORIZED:
-                raise ValueError(f"Cannot execute checkout in state '{session.state}'. Must be AUTHORIZED.")
+                raise ValueError(
+                    f"Cannot execute checkout in state '{session.state}'. Must be AUTHORIZED."
+                )
 
             # 2. Pre-Execution Invariant Gate
             # Check against latest policy state and live merchant proposal data
@@ -264,7 +276,9 @@ class TransactionCoordinator:
             if simulate_timeout:
                 # Ambiguous timeout scenario (Scenario G)
                 session.state = TransactionState.RECONCILIATION_REQUIRED
-                session.failure_reason = "Network timeout during capture. Gateway state ambiguous."
+                session.failure_reason = (
+                    "Network timeout during capture. Gateway state ambiguous."
+                )
                 self.audit_ledger.record_event(
                     event_type="PAYMENT_AMBIGUOUS_TIMEOUT",
                     checkout_id=checkout_id,
@@ -273,9 +287,11 @@ class TransactionCoordinator:
                 return session
 
             try:
-                capture_resp: PayPalOrderResponse = await self.paypal_client.capture_order(
-                    order_id=session.paypal_order_id,
-                    request_id=f"{req_id}_cap",
+                capture_resp: PayPalOrderResponse = (
+                    await self.paypal_client.capture_order(
+                        order_id=session.paypal_order_id,
+                        request_id=f"{req_id}_cap",
+                    )
                 )
                 if capture_resp.status == "COMPLETED":
                     session.state = TransactionState.PAID
@@ -294,7 +310,9 @@ class TransactionCoordinator:
                     )
                 else:
                     session.state = TransactionState.FAILED
-                    session.failure_reason = f"PayPal returned status: {capture_resp.status}"
+                    session.failure_reason = (
+                        f"PayPal returned status: {capture_resp.status}"
+                    )
             except Exception as e:
                 session.state = TransactionState.RECONCILIATION_REQUIRED
                 session.failure_reason = f"PayPal capture error: {str(e)}"
@@ -319,7 +337,9 @@ class TransactionCoordinator:
                 return session
 
             if session.state != TransactionState.AUTHORIZED:
-                raise ValueError(f"Cannot execute checkout in state '{session.state}'. Must be AUTHORIZED.")
+                raise ValueError(
+                    f"Cannot execute checkout in state '{session.state}'. Must be AUTHORIZED."
+                )
 
             policy = self._policies.get(session.policy_id)
             if not policy:
@@ -352,7 +372,9 @@ class TransactionCoordinator:
             # Check timeout simulation for live sandbox
             if simulate_timeout:
                 session.state = TransactionState.RECONCILIATION_REQUIRED
-                session.failure_reason = "Network timeout during capture. Gateway state ambiguous."
+                session.failure_reason = (
+                    "Network timeout during capture. Gateway state ambiguous."
+                )
                 self.audit_ledger.record_event(
                     event_type="PAYMENT_AMBIGUOUS_TIMEOUT",
                     checkout_id=checkout_id,
@@ -405,9 +427,11 @@ class TransactionCoordinator:
                 return session
 
             try:
-                capture_resp: PayPalOrderResponse = await self.paypal_client.capture_order(
-                    order_id=paypal_order_id,
-                    request_id=f"{session.idempotency_key}_cap",
+                capture_resp: PayPalOrderResponse = (
+                    await self.paypal_client.capture_order(
+                        order_id=paypal_order_id,
+                        request_id=f"{session.idempotency_key}_cap",
+                    )
                 )
                 if capture_resp.status == "COMPLETED":
                     session.state = TransactionState.PAID
@@ -424,7 +448,9 @@ class TransactionCoordinator:
                     )
                 else:
                     session.state = TransactionState.FAILED
-                    session.failure_reason = f"PayPal returned unexpected status: {capture_resp.status}"
+                    session.failure_reason = (
+                        f"PayPal returned unexpected status: {capture_resp.status}"
+                    )
             except Exception as e:
                 session.state = TransactionState.RECONCILIATION_REQUIRED
                 session.failure_reason = f"PayPal capture error: {str(e)}"
@@ -455,7 +481,9 @@ class TransactionCoordinator:
             )
         else:
             session.state = TransactionState.FAILED
-            session.failure_reason = f"Order reconciled as non-captured ({details.status})."
+            session.failure_reason = (
+                f"Order reconciled as non-captured ({details.status})."
+            )
             self.audit_ledger.record_event(
                 event_type="RECONCILIATION_ABORT",
                 checkout_id=checkout_id,
@@ -467,7 +495,9 @@ class TransactionCoordinator:
     def get_session(self, checkout_id: str) -> Optional[CheckoutSession]:
         return self._sessions.get(checkout_id)
 
-    def _record_spend(self, policy_id: str, amount: float, agent_id: Optional[str] = None):
+    def _record_spend(
+        self, policy_id: str, amount: float, agent_id: Optional[str] = None
+    ):
         """Atomically record captured spend against master policy and agent quota."""
         policy = self._policies.get(policy_id)
         if policy:
@@ -476,7 +506,9 @@ class TransactionCoordinator:
                 quota = policy.agent_quotas[agent_id]
                 quota.spent_budget = round(quota.spent_budget + amount, 2)
 
-    def _record_refund(self, policy_id: str, amount: float, agent_id: Optional[str] = None):
+    def _record_refund(
+        self, policy_id: str, amount: float, agent_id: Optional[str] = None
+    ):
         """Atomically credit back spend on refund or merchant reversal."""
         policy = self._policies.get(policy_id)
         if policy:
@@ -497,7 +529,10 @@ class TransactionCoordinator:
         if not target_checkout_id:
             order_id = resource.get("id") or resource.get("order_id")
             for chk_id, sess in self._sessions.items():
-                if sess.paypal_order_id == order_id or sess.paypal_capture_id == order_id:
+                if (
+                    sess.paypal_order_id == order_id
+                    or sess.paypal_capture_id == order_id
+                ):
                     target_checkout_id = chk_id
                     break
 
@@ -510,7 +545,9 @@ class TransactionCoordinator:
         if event_type in ("PAYMENT.CAPTURE.REFUNDED", "PAYMENT.SALE.REFUNDED"):
             session.state = TransactionState.REFUNDED
             amount_dict = resource.get("amount") or {}
-            amount_val = float(amount_dict.get("value") or session.proposal.total_amount)
+            amount_val = float(
+                amount_dict.get("value") or session.proposal.total_amount
+            )
             self._record_refund(
                 policy_id=session.policy_id,
                 amount=amount_val,
@@ -520,7 +557,8 @@ class TransactionCoordinator:
                 event_type="PAYMENT_REFUNDED",
                 checkout_id=target_checkout_id,
                 policy_version=policy.version if policy else None,
-                reason=summary or f"Payment refunded for checkout {target_checkout_id}: {amount_val}",
+                reason=summary
+                or f"Payment refunded for checkout {target_checkout_id}: {amount_val}",
             )
         elif event_type in ("CUSTOMER.DISPUTE.CREATED", "PAYMENT.CAPTURE.REVERSED"):
             session.state = TransactionState.DISPUTED
@@ -540,7 +578,9 @@ class TransactionCoordinator:
 
         return generate_signed_receipt(
             checkout_id=checkout_id,
-            decision="ALLOW" if session.state == TransactionState.PAID else "REJECT_OR_BLOCKED",
+            decision="ALLOW"
+            if session.state == TransactionState.PAID
+            else "REJECT_OR_BLOCKED",
             status=session.state.value,
             policy_id=session.policy_id,
             policy_version=session.policy_version,

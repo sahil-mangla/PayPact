@@ -1,4 +1,5 @@
 """Pytest configuration and test isolation fixtures."""
+
 import pytest
 from app.api.routers import coordinator
 

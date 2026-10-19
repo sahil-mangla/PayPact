@@ -4,7 +4,10 @@ IMPORTANT: app.config must be imported FIRST so that .env credentials are loaded
 into os.environ before app.api.routers instantiates the TransactionCoordinator
 (and its PayPalClient) at module level.
 """
+
 import app.config  # noqa: F401 — side-effect: loads .env with override=True
+
+import os
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -12,15 +15,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api.routers import router
 
 app = FastAPI(
-    title="Agent Payment Integrity Layer (APIL) API",
+    title="PayPact — Agent Payment Integrity Layer (APIL) API",
     description=(
         "Deterministic authorization, canonical proposal fingerprinting, "
         "and lifecycle state verification for AI purchasing agents with PayPal."
     ),
     version="1.0.0",
 )
-
-import os
 
 # Enable CORS for Next.js web application
 cors_origins_raw = os.getenv("CORS_ORIGINS", "").strip()
@@ -29,7 +30,9 @@ if cors_origins_raw and cors_origins_raw != "*":
     allow_credentials = True
 elif cors_origins_raw == "*":
     allowed_origins = ["*"]
-    allow_credentials = False  # Wildcard cannot have allow_credentials=True per W3C CORS spec
+    allow_credentials = (
+        False  # Wildcard cannot have allow_credentials=True per W3C CORS spec
+    )
 else:
     allowed_origins = [
         "http://localhost:3000",
