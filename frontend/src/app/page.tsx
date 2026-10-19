@@ -36,7 +36,18 @@ import {
 
 import { WordByWordText } from '../components/WordByWordText';
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api';
+function getApiBaseUrl(): string {
+  let url = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api';
+  if (url && !url.startsWith('http://') && !url.startsWith('https://')) {
+    url = `https://${url}`;
+  }
+  if (url && !url.endsWith('/api')) {
+    url = `${url.replace(/\/+$/, '')}/api`;
+  }
+  return url;
+}
+
+const API_BASE = getApiBaseUrl();
 const PAYPAL_CLIENT_ID = process.env.NEXT_PUBLIC_PAYPAL_CLIENT_ID || '';
 
 const DEFAULT_SCENARIOS = [

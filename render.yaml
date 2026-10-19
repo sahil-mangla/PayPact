@@ -1,9 +1,9 @@
 services:
   # =========================================================================
-  # 1. APIL Backend API (FastAPI + Deterministic Policy Engine)
+  # 1. PayPact Backend API (FastAPI + Deterministic Policy Engine)
   # =========================================================================
   - type: web
-    name: apil-backend
+    name: paypact-backend
     runtime: python
     rootDir: backend
     plan: free
@@ -25,10 +25,10 @@ services:
         sync: false
 
   # =========================================================================
-  # 2. APIL Frontend Web App (Next.js 14 + Aceternity UI + Tailwind)
+  # 2. PayPact Frontend Web App (Next.js 14 + Aceternity UI)
   # =========================================================================
   - type: web
-    name: apil-frontend
+    name: paypact-frontend
     runtime: node
     rootDir: frontend
     plan: free
@@ -43,5 +43,5 @@ services:
       - key: NEXT_PUBLIC_API_URL
         fromService:
           type: web
-          name: apil-backend
+          name: paypact-backend
           property: host
