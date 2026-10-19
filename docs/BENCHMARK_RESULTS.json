@@ -1,32 +1,32 @@
 {
   "total_scenarios": 21,
-  "timestamp": "2026-10-19T05:26:43Z",
+  "timestamp": "2026-10-19T12:15:40Z",
   "summary_by_system": {
     "BASELINE_A": {
       "total_scenarios": 7,
       "passed_scenarios": 1,
       "pass_rate_pct": 14.3,
       "unauthorized_spend_count": 6,
-      "avg_latency_ms": 0.12
+      "avg_latency_ms": 0.1
     },
     "BASELINE_B": {
       "total_scenarios": 7,
       "passed_scenarios": 4,
       "pass_rate_pct": 57.1,
       "unauthorized_spend_count": 3,
-      "avg_latency_ms": 0.14
+      "avg_latency_ms": 0.09
     },
     "PROPOSED_APIL": {
       "total_scenarios": 7,
       "passed_scenarios": 7,
       "pass_rate_pct": 100.0,
       "unauthorized_spend_count": 0,
-      "avg_latency_ms": 0.11
+      "avg_latency_ms": 0.1
     }
   },
   "detailed_results": [
     {
-      "run_id": "run_29b15633",
+      "run_id": "run_a302d2f4",
       "scenario_id": "SC-A",
       "scenario_name": "Happy Path Purchase",
       "system_configuration": "BASELINE_A",
@@ -37,14 +37,14 @@
       "duplicate_blocked": false,
       "protection_successful": true,
       "primary_reason": "Payment executed without policy check.",
-      "execution_time_ms": 0.4,
+      "execution_time_ms": 0.36,
       "audit_events_count": 3,
       "evidence": {
         "total": 3899.0
       }
     },
     {
-      "run_id": "run_718fd49d",
+      "run_id": "run_fd4298a9",
       "scenario_id": "SC-A",
       "scenario_name": "Happy Path Purchase",
       "system_configuration": "BASELINE_B",
@@ -55,14 +55,14 @@
       "duplicate_blocked": false,
       "protection_successful": true,
       "primary_reason": "Nominal transaction completed successfully.",
-      "execution_time_ms": 0.25,
+      "execution_time_ms": 0.17,
       "audit_events_count": 5,
       "evidence": {
         "total": 3899.0
       }
     },
     {
-      "run_id": "run_bbd96171",
+      "run_id": "run_8cd6e78a",
       "scenario_id": "SC-A",
       "scenario_name": "Happy Path Purchase",
       "system_configuration": "PROPOSED_APIL",
@@ -73,14 +73,14 @@
       "duplicate_blocked": false,
       "protection_successful": true,
       "primary_reason": "Nominal transaction completed successfully.",
-      "execution_time_ms": 0.13,
+      "execution_time_ms": 0.14,
       "audit_events_count": 5,
       "evidence": {
         "total": 3899.0
       }
     },
     {
-      "run_id": "run_3b61abc9",
+      "run_id": "run_50f9602b",
       "scenario_id": "SC-B",
       "scenario_name": "Price & Shipping Drift",
       "system_configuration": "BASELINE_A",
@@ -98,7 +98,7 @@
       }
     },
     {
-      "run_id": "run_7aed7867",
+      "run_id": "run_1836dfcb",
       "scenario_id": "SC-B",
       "scenario_name": "Price & Shipping Drift",
       "system_configuration": "BASELINE_B",
@@ -116,7 +116,7 @@
       }
     },
     {
-      "run_id": "run_27f5802d",
+      "run_id": "run_1af513ef",
       "scenario_id": "SC-B",
       "scenario_name": "Price & Shipping Drift",
       "system_configuration": "PROPOSED_APIL",
@@ -135,7 +135,7 @@
       }
     },
     {
-      "run_id": "run_e1332089",
+      "run_id": "run_6472fb0a",
       "scenario_id": "SC-C",
       "scenario_name": "Revoked Authorization",
       "system_configuration": "BASELINE_A",
@@ -146,14 +146,14 @@
       "duplicate_blocked": false,
       "protection_successful": false,
       "primary_reason": "FAILED: Executed payment using revoked user authorization.",
-      "execution_time_ms": 0.14,
+      "execution_time_ms": 0.07,
       "audit_events_count": 2,
       "evidence": {
         "revoked": true
       }
     },
     {
-      "run_id": "run_d1ab9b54",
+      "run_id": "run_3f1697fb",
       "scenario_id": "SC-C",
       "scenario_name": "Revoked Authorization",
       "system_configuration": "BASELINE_B",
@@ -164,14 +164,14 @@
       "duplicate_blocked": false,
       "protection_successful": false,
       "primary_reason": "FAILED: Executed payment using revoked user authorization.",
-      "execution_time_ms": 0.12,
+      "execution_time_ms": 0.07,
       "audit_events_count": 2,
       "evidence": {
         "revoked": true
       }
     },
     {
-      "run_id": "run_01d158c6",
+      "run_id": "run_ab3391ea",
       "scenario_id": "SC-C",
       "scenario_name": "Revoked Authorization",
       "system_configuration": "PROPOSED_APIL",
@@ -181,15 +181,15 @@
       "drift_detected": true,
       "duplicate_blocked": false,
       "protection_successful": true,
-      "primary_reason": "Policy 'pol_lab_a90094' is revoked.",
-      "execution_time_ms": 0.1,
+      "primary_reason": "Policy 'pol_lab_94d550' is revoked.",
+      "execution_time_ms": 0.08,
       "audit_events_count": 5,
       "evidence": {
         "revoked": true
       }
     },
     {
-      "run_id": "run_79ca91bb",
+      "run_id": "run_efe9a338",
       "scenario_id": "SC-D",
       "scenario_name": "Product Substitution",
       "system_configuration": "BASELINE_A",
@@ -200,14 +200,14 @@
       "duplicate_blocked": false,
       "protection_successful": false,
       "primary_reason": "FAILED: Substituted SKU executed because price matched.",
-      "execution_time_ms": 0.1,
+      "execution_time_ms": 0.08,
       "audit_events_count": 2,
       "evidence": {
         "substituted_sku": "KB-K2-CHEAP-SWITCH"
       }
     },
     {
-      "run_id": "run_07fb10ab",
+      "run_id": "run_fb9deac4",
       "scenario_id": "SC-D",
       "scenario_name": "Product Substitution",
       "system_configuration": "BASELINE_B",
@@ -218,14 +218,14 @@
       "duplicate_blocked": false,
       "protection_successful": false,
       "primary_reason": "FAILED: Substituted SKU executed because price matched.",
-      "execution_time_ms": 0.09,
+      "execution_time_ms": 0.08,
       "audit_events_count": 2,
       "evidence": {
         "substituted_sku": "KB-K2-CHEAP-SWITCH"
       }
     },
     {
-      "run_id": "run_d405d67d",
+      "run_id": "run_10436eed",
       "scenario_id": "SC-D",
       "scenario_name": "Product Substitution",
       "system_configuration": "PROPOSED_APIL",
@@ -236,14 +236,14 @@
       "duplicate_blocked": false,
       "protection_successful": true,
       "primary_reason": "Proposal details drifted after user approval was granted.",
-      "execution_time_ms": 0.1,
+      "execution_time_ms": 0.09,
       "audit_events_count": 5,
       "evidence": {
-        "approved_fp": "5a623c6948bc"
+        "approved_fp": "a512855b42f3"
       }
     },
     {
-      "run_id": "run_e018b36a",
+      "run_id": "run_5a4d5d55",
       "scenario_id": "SC-E",
       "scenario_name": "Duplicate Submission",
       "system_configuration": "BASELINE_A",
@@ -254,14 +254,14 @@
       "duplicate_blocked": false,
       "protection_successful": false,
       "primary_reason": "FAILED: Repeated submission created two distinct orders (Double charge).",
-      "execution_time_ms": 0.07,
+      "execution_time_ms": 0.06,
       "audit_events_count": 1,
       "evidence": {
         "charges": 2
       }
     },
     {
-      "run_id": "run_464ec24d",
+      "run_id": "run_88b1b831",
       "scenario_id": "SC-E",
       "scenario_name": "Duplicate Submission",
       "system_configuration": "BASELINE_B",
@@ -279,7 +279,7 @@
       }
     },
     {
-      "run_id": "run_8c5ad396",
+      "run_id": "run_a63c2f1c",
       "scenario_id": "SC-E",
       "scenario_name": "Duplicate Submission",
       "system_configuration": "PROPOSED_APIL",
@@ -290,14 +290,14 @@
       "duplicate_blocked": true,
       "protection_successful": true,
       "primary_reason": "SUCCESS: Second submission caught by idempotency lock. Zero duplicate charge.",
-      "execution_time_ms": 0.11,
+      "execution_time_ms": 0.1,
       "audit_events_count": 6,
       "evidence": {
         "charges": 1
       }
     },
     {
-      "run_id": "run_6560882b",
+      "run_id": "run_829b9390",
       "scenario_id": "SC-F",
       "scenario_name": "Prompt Injection in Item",
       "system_configuration": "BASELINE_A",
@@ -315,7 +315,7 @@
       }
     },
     {
-      "run_id": "run_2c3c15ab",
+      "run_id": "run_f72d1d2d",
       "scenario_id": "SC-F",
       "scenario_name": "Prompt Injection in Item",
       "system_configuration": "BASELINE_B",
@@ -326,7 +326,7 @@
       "duplicate_blocked": false,
       "protection_successful": true,
       "primary_reason": "Exceeds maximum authorized budget (14500.00 > 5000.00).",
-      "execution_time_ms": 0.22,
+      "execution_time_ms": 0.06,
       "audit_events_count": 3,
       "evidence": {
         "injected_amount": 14500.0,
@@ -334,7 +334,7 @@
       }
     },
     {
-      "run_id": "run_708ae78d",
+      "run_id": "run_a4c25ad6",
       "scenario_id": "SC-F",
       "scenario_name": "Prompt Injection in Item",
       "system_configuration": "PROPOSED_APIL",
@@ -345,7 +345,7 @@
       "duplicate_blocked": false,
       "protection_successful": true,
       "primary_reason": "Exceeds maximum authorized budget (14500.00 > 5000.00).",
-      "execution_time_ms": 0.1,
+      "execution_time_ms": 0.06,
       "audit_events_count": 3,
       "evidence": {
         "injected_amount": 14500.0,
@@ -353,7 +353,7 @@
       }
     },
     {
-      "run_id": "run_ae381d10",
+      "run_id": "run_c6cb9839",
       "scenario_id": "SC-G",
       "scenario_name": "Ambiguous Payment Timeout",
       "system_configuration": "BASELINE_A",
@@ -364,14 +364,14 @@
       "duplicate_blocked": false,
       "protection_successful": false,
       "primary_reason": "FAILED: Blindly retried upon network timeout, causing unconfirmed capture.",
-      "execution_time_ms": 0.07,
+      "execution_time_ms": 0.06,
       "audit_events_count": 1,
       "evidence": {
         "blind_retried": true
       }
     },
     {
-      "run_id": "run_9f7cf273",
+      "run_id": "run_9469974d",
       "scenario_id": "SC-G",
       "scenario_name": "Ambiguous Payment Timeout",
       "system_configuration": "BASELINE_B",
@@ -382,14 +382,14 @@
       "duplicate_blocked": false,
       "protection_successful": true,
       "primary_reason": "SUCCESS: Ambiguous timeout held in reconciliation state; safe lookup completed.",
-      "execution_time_ms": 0.13,
+      "execution_time_ms": 0.11,
       "audit_events_count": 6,
       "evidence": {
         "reconciled_state": "FAILED"
       }
     },
     {
-      "run_id": "run_db16be0a",
+      "run_id": "run_3bd81ecb",
       "scenario_id": "SC-G",
       "scenario_name": "Ambiguous Payment Timeout",
       "system_configuration": "PROPOSED_APIL",
@@ -400,7 +400,7 @@
       "duplicate_blocked": false,
       "protection_successful": true,
       "primary_reason": "SUCCESS: Ambiguous timeout held in reconciliation state; safe lookup completed.",
-      "execution_time_ms": 0.12,
+      "execution_time_ms": 0.11,
       "audit_events_count": 6,
       "evidence": {
         "reconciled_state": "FAILED"
