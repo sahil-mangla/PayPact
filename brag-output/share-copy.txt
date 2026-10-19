@@ -1,7 +1,0 @@
-Never let an autonomous AI agent touch a payment gateway without a cryptographic firewall.
-
-Meet APIL (Agent Payment Integrity Layer): deterministic pre-execution guardrails, hierarchical swarm budget trees, and HMAC-SHA256 signed audit receipts for autonomous commerce transacting via PayPal.
-
-🛡️ 100% integrity pass rate on adversarial stress-tests vs 14.3% direct LLM baseline.
-🔗 GitHub: https://github.com/sahilmangla/paypal-hack
-#PayPalAI #AgenticCommerce #Fintech #AI #CyberSecurity

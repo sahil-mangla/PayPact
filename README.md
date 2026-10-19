@@ -3,7 +3,7 @@
 > **PayPal AI Hackathon 2026 Submission**  
 > *Build What's Next with PayPal and AI*  
 > **Repository:** [github.com/sahil-mangla/PayPact](https://github.com/sahil-mangla/PayPact)  
-> **Video Demonstration:** [brag-output/brag.mp4](brag-output/brag.mp4)  
+> **Video Demonstration:** Walkthrough script available in Section 9  
 > **License:** Apache 2.0  
 
 ---
