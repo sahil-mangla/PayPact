@@ -22,7 +22,7 @@ services:
       - key: PAYPAL_CLIENT_SECRET
         sync: false
       - key: PAYPAL_WEBHOOK_ID
-        sync: false
+        value: ""
 
   # =========================================================================
   # 2. PayPact Frontend Web App (Next.js 14 + Aceternity UI)
