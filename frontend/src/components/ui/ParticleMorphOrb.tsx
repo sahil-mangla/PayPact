@@ -192,11 +192,12 @@ export default function ParticleMorphOrb({
       return;
     }
 
-    const clock = new THREE.Clock();
+    const startTime = typeof performance !== 'undefined' ? performance.now() : Date.now();
 
     const animate = () => {
       animationFrameId = requestAnimationFrame(animate);
-      const elapsedTime = clock.getElapsedTime() * speed;
+      const now = typeof performance !== 'undefined' ? performance.now() : Date.now();
+      const elapsedTime = ((now - startTime) / 1000) * speed;
 
       if (material && material.uniforms?.uTime) {
         material.uniforms.uTime.value = elapsedTime * 1.25;
@@ -317,6 +318,7 @@ export interface AiThinkingOrbProps {
   text?: string;
   subtext?: string;
   size?: 'sm' | 'md' | 'lg';
+  variant?: 'dark' | 'light';
   className?: string;
   cycleMessages?: string[];
 }
@@ -325,6 +327,7 @@ export function AiThinkingOrb({
   text,
   subtext,
   size = 'md',
+  variant = 'dark',
   className = '',
   cycleMessages = DEFAULT_THINKING_MESSAGES,
 }: AiThinkingOrbProps) {
@@ -338,17 +341,23 @@ export function AiThinkingOrb({
     return () => clearInterval(interval);
   }, [text, cycleMessages.length]);
 
-  const orbSize = size === 'sm' ? 24 : size === 'lg' ? 44 : 34;
+  const orbSize = size === 'sm' ? 20 : size === 'lg' ? 44 : 30;
   const displayText = text || cycleMessages[index];
+  const isLight = variant === 'light';
 
   return (
     <div
-      className={`inline-flex items-center gap-3 px-4 py-2 rounded-full text-white select-none ${className}`}
+      className={`inline-flex items-center gap-2.5 rounded-full select-none ${className}`}
       style={{
-        background: 'linear-gradient(135deg, rgba(15, 23, 42, 0.94) 0%, rgba(10, 15, 30, 0.96) 100%)',
+        padding: size === 'sm' ? '3px 10px' : '6px 14px',
+        background: isLight
+          ? 'linear-gradient(135deg, #ffffff 0%, #f0fdf4 100%)'
+          : 'linear-gradient(135deg, rgba(15, 23, 42, 0.94) 0%, rgba(10, 15, 30, 0.96) 100%)',
         backdropFilter: 'blur(12px)',
-        border: '1px solid rgba(255, 255, 255, 0.12)',
-        boxShadow: '0 10px 25px -5px rgba(0, 0, 0, 0.45), 0 0 15px rgba(0, 112, 186, 0.25)',
+        border: isLight ? '1px solid #bfdbfe' : '1px solid rgba(255, 255, 255, 0.12)',
+        boxShadow: isLight
+          ? '0 2px 10px rgba(0, 112, 186, 0.08)'
+          : '0 10px 25px -5px rgba(0, 0, 0, 0.45), 0 0 15px rgba(0, 112, 186, 0.25)',
       }}
     >
       <div style={{ flexShrink: 0, width: orbSize, height: orbSize }} className="flex items-center justify-center">
@@ -357,17 +366,17 @@ export function AiThinkingOrb({
       <div className="flex flex-col text-left">
         <span
           style={{
-            fontSize: size === 'sm' ? '0.74rem' : size === 'lg' ? '0.9rem' : '0.82rem',
-            fontWeight: 500,
-            letterSpacing: '0.02em',
-            color: '#f8fafc',
+            fontSize: size === 'sm' ? '0.72rem' : size === 'lg' ? '0.9rem' : '0.8rem',
+            fontWeight: 600,
+            letterSpacing: '0.01em',
+            color: isLight ? '#0f172a' : '#f8fafc',
             fontFamily: 'system-ui, -apple-system, sans-serif',
           }}
         >
           {displayText}
         </span>
         {subtext && (
-          <span style={{ fontSize: '0.66rem', color: '#94a3b8', marginTop: '-1px' }}>
+          <span style={{ fontSize: '0.64rem', color: isLight ? '#64748b' : '#94a3b8', marginTop: '-1px' }}>
             {subtext}
           </span>
         )}

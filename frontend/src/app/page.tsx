@@ -32,6 +32,9 @@ import {
   Code2,
   Zap,
   FileWarning,
+  Server,
+  Globe,
+  Settings,
 } from 'lucide-react';
 
 import { WordByWordText } from '../components/WordByWordText';
@@ -39,13 +42,34 @@ import ParticleMorphOrb, { AiThinkingOrb, AiThinkingCard } from '../components/u
 
 function getApiBaseUrl(): string {
   if (typeof window !== 'undefined') {
+    // 1. Check user override in localStorage
+    try {
+      const stored = localStorage.getItem('paypact_backend_url');
+      if (stored && stored.trim()) {
+        const clean = stored.trim().replace(/\/+$/, '');
+        return clean.endsWith('/api') ? clean : `${clean}/api`;
+      }
+    } catch (_) {}
+
+    // 2. Check NEXT_PUBLIC_API_URL
     const envUrl = process.env.NEXT_PUBLIC_API_URL;
-    // Only use envUrl if it is a valid public FQDN (contains '.' and not bare internal name like 'paypact-backend')
-    if (envUrl && envUrl.includes('.') && !envUrl.includes('localhost')) {
-      let url = envUrl.startsWith('http://') || envUrl.startsWith('https://') ? envUrl : `https://${envUrl}`;
+    if (envUrl && envUrl.trim() && !envUrl.includes('localhost')) {
+      let url = envUrl.trim().startsWith('http://') || envUrl.trim().startsWith('https://')
+        ? envUrl.trim()
+        : `https://${envUrl.trim()}`;
       return url.endsWith('/api') ? url : `${url.replace(/\/+$/, '')}/api`;
     }
-    // Fallback to relative /api which proxies through Next.js rewrite safely on the same origin
+
+    // 3. If running on Render (*.onrender.com), dynamically derive public backend URL
+    const host = window.location.hostname;
+    if (host.includes('.onrender.com')) {
+      if (host.includes('frontend')) {
+        return `https://${host.replace('frontend', 'backend')}/api`;
+      }
+      return 'https://paypact-backend.onrender.com/api';
+    }
+
+    // 4. Default: relative /api
     return '/api';
   }
   let url = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api';
@@ -56,6 +80,50 @@ function getApiBaseUrl(): string {
     url = `${url.replace(/\/+$/, '')}/api`;
   }
   return url;
+}
+
+async function apiFetch(path: string, options?: RequestInit): Promise<Response> {
+  const normalizedPath = path.startsWith('/') ? path : `/${path}`;
+  const currentBase = getApiBaseUrl();
+
+  try {
+    const res = await fetch(`${currentBase}${normalizedPath}`, options);
+    // If response is successful or expected 4xx business validation, return it
+    if (res.ok || (res.status >= 400 && res.status < 500)) {
+      return res;
+    }
+    // If upstream returns 500/502/503/504 and we were using relative /api proxy:
+    if (res.status >= 500 && currentBase === '/api') {
+      const fallbackUrl = 'https://paypact-backend.onrender.com/api';
+      const fbRes = await fetch(`${fallbackUrl}${normalizedPath}`, options);
+      if (fbRes.ok || fbRes.status < 500) {
+        if (typeof window !== 'undefined') {
+          try {
+            localStorage.setItem('paypact_backend_url', fallbackUrl);
+          } catch (_) {}
+        }
+        return fbRes;
+      }
+    }
+    return res;
+  } catch (networkError) {
+    // If network connection failed or was blocked by proxy:
+    if (currentBase === '/api' || !currentBase.includes('paypact-backend.onrender.com')) {
+      try {
+        const fallbackUrl = 'https://paypact-backend.onrender.com/api';
+        const fbRes = await fetch(`${fallbackUrl}${normalizedPath}`, options);
+        if (fbRes.ok || fbRes.status < 500) {
+          if (typeof window !== 'undefined') {
+            try {
+              localStorage.setItem('paypact_backend_url', fallbackUrl);
+            } catch (_) {}
+          }
+          return fbRes;
+        }
+      } catch (_) {}
+    }
+    throw networkError;
+  }
 }
 
 const API_BASE = getApiBaseUrl();
@@ -93,7 +161,7 @@ function PayPalCheckoutButton({
       <PayPalButtons
         style={{ layout: 'vertical', color: 'blue', shape: 'pill', label: 'pay', height: 44 }}
         createOrder={async () => {
-          const res = await fetch(`${API_BASE}/checkouts/${checkoutId}/execute`, {
+          const res = await apiFetch(`/checkouts/${checkoutId}/execute`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({}),
@@ -110,7 +178,7 @@ function PayPalCheckoutButton({
           return data.paypal_order_id;
         }}
         onApprove={async (sdkData) => {
-          const res = await fetch(`${API_BASE}/checkouts/${checkoutId}/capture`, {
+          const res = await apiFetch(`/checkouts/${checkoutId}/capture`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ paypal_order_id: sdkData.orderID }),
@@ -183,6 +251,10 @@ export default function Home() {
   const [verifierDragActive, setVerifierDragActive] = useState<boolean>(false);
   const [verifierRawExpanded, setVerifierRawExpanded] = useState<boolean>(false);
 
+  // Backend Connection Settings Modal State
+  const [serverModalOpen, setServerModalOpen] = useState(false);
+  const [customBackendInput, setCustomBackendInput] = useState('');
+
   // Interactive Receipt Verifier Handlers
   const handleVerifyReceiptPayload = async (receiptPayload: any, isTamperedSimulated = false, tamperReason = '') => {
     try {
@@ -191,7 +263,7 @@ export default function Home() {
       setVerifierIsTamperedSimulated(isTamperedSimulated);
       setVerifierTamperReason(tamperReason);
 
-      const res = await fetch(`${API_BASE}/receipt/verify`, {
+      const res = await apiFetch('/receipt/verify', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(receiptPayload),
@@ -215,11 +287,11 @@ export default function Home() {
       setVerifierStatus('verifying');
       let receiptToUse = null;
       if (checkoutSession?.checkout_id) {
-        const rcptRes = await fetch(`${API_BASE}/checkouts/${checkoutSession.checkout_id}/receipt`);
+        const rcptRes = await apiFetch(`/checkouts/${checkoutSession.checkout_id}/receipt`);
         if (rcptRes.ok) receiptToUse = await rcptRes.json();
       }
       if (!receiptToUse) {
-        const sampleRes = await fetch(`${API_BASE}/receipt/sample`);
+        const sampleRes = await apiFetch('/receipt/sample');
         if (sampleRes.ok) receiptToUse = await sampleRes.json();
       }
       if (receiptToUse) {
@@ -238,7 +310,7 @@ export default function Home() {
       setVerifierStatus('verifying');
       let baseReceipt = verifierReceipt;
       if (!baseReceipt) {
-        const sampleRes = await fetch(`${API_BASE}/receipt/sample`);
+        const sampleRes = await apiFetch('/receipt/sample');
         if (sampleRes.ok) baseReceipt = await sampleRes.json();
       }
       if (!baseReceipt) throw new Error('No base receipt available');
@@ -266,7 +338,7 @@ export default function Home() {
       setVerifierStatus('verifying');
       let baseReceipt = verifierReceipt;
       if (!baseReceipt) {
-        const sampleRes = await fetch(`${API_BASE}/receipt/sample`);
+        const sampleRes = await apiFetch('/receipt/sample');
         if (sampleRes.ok) baseReceipt = await sampleRes.json();
       }
       if (!baseReceipt) throw new Error('No base receipt available');
@@ -326,7 +398,7 @@ export default function Home() {
 
   const fetchHealth = async () => {
     try {
-      const res = await fetch(`${API_BASE}/health`);
+      const res = await apiFetch('/health');
       if (res.ok) setHealthStatus(await res.json());
     } catch (e) {
       console.warn('Health check failed', e);
@@ -335,7 +407,7 @@ export default function Home() {
 
   const fetchScenarios = async () => {
     try {
-      const res = await fetch(`${API_BASE}/lab/scenarios`);
+      const res = await apiFetch('/lab/scenarios');
       if (res.ok) setLabScenarios(await res.json());
       else setLabScenarios(DEFAULT_SCENARIOS);
     } catch (_) {
@@ -345,7 +417,7 @@ export default function Home() {
 
   const fetchAuditEvents = async () => {
     try {
-      const res = await fetch(`${API_BASE}/audit/events`);
+      const res = await apiFetch('/audit/events');
       if (res.ok) setAuditData(await res.json());
     } catch (e) {
       console.warn('Audit fetch failed', e);
@@ -370,7 +442,7 @@ export default function Home() {
 
     try {
       // 1. Natural language parse
-      const parseRes = await fetch(`${API_BASE}/authorizations/parse-intent`, {
+      const parseRes = await apiFetch('/authorizations/parse-intent', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ prompt: activePrompt, user_id: 'usr_shopper' }),
@@ -381,7 +453,7 @@ export default function Home() {
       setPipelineStep(2);
 
       // 2. Register policy
-      const regRes = await fetch(`${API_BASE}/authorizations`, {
+      const regRes = await apiFetch('/authorizations', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(parsedPolicy),
@@ -406,7 +478,7 @@ export default function Home() {
     try {
       const activeAgent = agentOverride || selectedAgent;
       const activePrompt = promptOverride !== undefined ? promptOverride : prompt;
-      const propRes = await fetch(`${API_BASE}/proposals`, {
+      const propRes = await apiFetch('/proposals', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ prompt: activePrompt, policy_id: policyId, agent_id: activeAgent }),
@@ -430,7 +502,7 @@ export default function Home() {
 
   const handleDownloadReceipt = async (checkoutId: string) => {
     try {
-      const res = await fetch(`${API_BASE}/checkouts/${checkoutId}/receipt`);
+      const res = await apiFetch(`/checkouts/${checkoutId}/receipt`);
       if (!res.ok) throw new Error('Receipt generation failed');
       const receipt = await res.json();
       const blob = new Blob([JSON.stringify(receipt, null, 2)], { type: 'application/json' });
@@ -449,12 +521,12 @@ export default function Home() {
     try {
       setReceiptVerificationState('verifying');
       setReceiptModalOpen(true);
-      const res = await fetch(`${API_BASE}/checkouts/${checkoutId}/receipt`);
+      const res = await apiFetch(`/checkouts/${checkoutId}/receipt`);
       if (!res.ok) throw new Error('Receipt retrieval failed');
       const receipt = await res.json();
       setInspectingReceipt(receipt);
 
-      const verifyRes = await fetch(`${API_BASE}/receipt/verify`, {
+      const verifyRes = await apiFetch('/receipt/verify', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(receipt),
@@ -471,7 +543,7 @@ export default function Home() {
   const handleSimulateWebhook = async (checkoutId: string, eventType: string) => {
     try {
       setWebhookStatus(`Sending PayPal webhook: ${eventType}...`);
-      const res = await fetch(`${API_BASE}/webhooks/simulate`, {
+      const res = await apiFetch('/webhooks/simulate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ checkout_id: checkoutId, event_type: eventType }),
@@ -490,7 +562,7 @@ export default function Home() {
     if (!proposalRes?.checkout_id) return;
     setLoading(true);
     try {
-      const res = await fetch(`${API_BASE}/checkouts/${proposalRes.checkout_id}/approve`, {
+      const res = await apiFetch(`/checkouts/${proposalRes.checkout_id}/approve`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ user_id: 'usr_shopper' }),
@@ -514,7 +586,7 @@ export default function Home() {
       const payload: any = {};
       if (simulateDrift !== 'none') payload.simulate_drift_type = simulateDrift;
 
-      const res = await fetch(`${API_BASE}/checkouts/${proposalRes.checkout_id}/execute`, {
+      const res = await apiFetch(`/checkouts/${proposalRes.checkout_id}/execute`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
@@ -546,7 +618,7 @@ export default function Home() {
     setPipelineStep(3);
     await new Promise((r) => setTimeout(r, 300));
     try {
-      const res = await fetch(`${API_BASE}/checkouts/${proposalRes.checkout_id}/execute`, {
+      const res = await apiFetch(`/checkouts/${proposalRes.checkout_id}/execute`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ simulate_drift_type: simulateDrift }),
@@ -566,7 +638,7 @@ export default function Home() {
   const handleRevokePolicy = async () => {
     if (!policy?.policy_id) return;
     try {
-      await fetch(`${API_BASE}/authorizations/${policy.policy_id}/revoke`, { method: 'POST' });
+      await apiFetch(`/authorizations/${policy.policy_id}/revoke`, { method: 'POST' });
       setPolicy((prev: any) => ({ ...prev, is_revoked: true }));
       setPipelineBlocked(true);
     } catch (err: any) {
@@ -577,7 +649,7 @@ export default function Home() {
   const handleRunBenchmark = async () => {
     setLabRunning(true);
     try {
-      const res = await fetch(`${API_BASE}/lab/run`, {
+      const res = await apiFetch('/lab/run', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ system_type: selectedSystem }),
@@ -682,10 +754,119 @@ export default function Home() {
               );
             })}
           </div>
+
+          {/* Backend Connection Pill */}
+          <button
+            type="button"
+            onClick={() => {
+              setCustomBackendInput(getApiBaseUrl());
+              setServerModalOpen(true);
+            }}
+            style={{
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+              background: healthStatus ? '#f0fdf4' : '#fff7ed',
+              color: healthStatus ? '#15803d' : '#c2410c',
+              border: `1px solid ${healthStatus ? '#bbf7d0' : '#fed7aa'}`,
+              padding: '5px 12px',
+              borderRadius: '9999px',
+              fontSize: '0.74rem',
+              fontWeight: 600,
+              transition: 'all 0.2s ease',
+            }}
+            title="Configure Backend Connection"
+          >
+            <div
+              style={{
+                width: '7px',
+                height: '7px',
+                borderRadius: '50%',
+                background: healthStatus ? '#22c55e' : '#f97316',
+                boxShadow: healthStatus ? '0 0 6px #22c55e' : '0 0 6px #f97316',
+              }}
+            />
+            <Server size={13} />
+            <span>{healthStatus ? 'API Connected' : 'Connecting API...'}</span>
+            <Settings size={12} style={{ opacity: 0.6, marginLeft: '2px' }} />
+          </button>
         </header>
 
         {/* ── Main Container ── */}
         <div style={{ maxWidth: '1280px', margin: '0 auto', padding: '0 8px' }}>
+
+          {/* Auto-Recovery Backend Alert Banner */}
+          {!healthStatus && (
+            <div
+              style={{
+                marginBottom: '12px',
+                padding: '10px 16px',
+                borderRadius: '10px',
+                background: '#fffbeb',
+                border: '1px solid #fde68a',
+                display: 'flex',
+                flexWrap: 'wrap',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                gap: '10px',
+                fontSize: '0.82rem',
+                color: '#92400e',
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <AlertTriangle size={16} color="#d97706" />
+                <span>
+                  Backend connection initializing or recovering. Active Target:{' '}
+                  <code style={{ background: '#fef3c7', padding: '1px 6px', borderRadius: '4px', fontWeight: 600 }}>
+                    {typeof window !== 'undefined' ? getApiBaseUrl() : '/api'}
+                  </code>
+                </span>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (typeof window !== 'undefined') {
+                      localStorage.setItem('paypact_backend_url', 'https://paypact-backend.onrender.com/api');
+                      fetchHealth();
+                      fetchScenarios();
+                    }
+                  }}
+                  style={{
+                    background: '#f59e0b',
+                    color: '#ffffff',
+                    border: 'none',
+                    padding: '4px 12px',
+                    borderRadius: '6px',
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                    fontSize: '0.76rem',
+                  }}
+                >
+                  ⚡ Connect Public Render API
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCustomBackendInput(getApiBaseUrl());
+                    setServerModalOpen(true);
+                  }}
+                  style={{
+                    background: 'transparent',
+                    border: '1px solid #d97706',
+                    color: '#92400e',
+                    padding: '4px 10px',
+                    borderRadius: '6px',
+                    cursor: 'pointer',
+                    fontSize: '0.76rem',
+                  }}
+                >
+                  Configure
+                </button>
+              </div>
+            </div>
+          )}
 
           {/* ══════════════════════════════════════════════════════ */}
           {/* PAYMENT AUTHORIZATION PROGRESS STEPS (Compact Stepper) */}
@@ -765,7 +946,23 @@ export default function Home() {
 
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
               {loading ? (
-                <AiThinkingOrb size="sm" text="AI Evaluating Policy..." />
+                <span
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '5px',
+                    padding: '3px 10px',
+                    borderRadius: '9999px',
+                    background: '#eff6ff',
+                    border: '1px solid #bfdbfe',
+                    fontSize: '0.68rem',
+                    fontWeight: 600,
+                    color: '#0070ba',
+                  }}
+                >
+                  <RefreshCw size={11} className="animate-spin" />
+                  <span>Evaluating Invariants...</span>
+                </span>
               ) : pipelineBlocked ? (
                 <span className="badge badge-reject" style={{ fontSize: '0.68rem', padding: '2px 8px' }}>Blocked by Rule</span>
               ) : (
@@ -1506,6 +1703,7 @@ export default function Home() {
                   {labRunning && (
                     <AiThinkingOrb
                       size="sm"
+                      variant="light"
                       text="Evaluating 7 Invariant Scenarios..."
                       subtext="Testing price drift & prompt injection resilience"
                     />
@@ -2074,6 +2272,178 @@ export default function Home() {
                     style={{ fontSize: '0.8rem', padding: '8px 18px' }}
                   >
                     Close
+                  </button>
+                </div>
+              </motion.div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* ── Backend API Configuration Modal ── */}
+        <AnimatePresence>
+          {serverModalOpen && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              style={{
+                position: 'fixed',
+                inset: 0,
+                background: 'rgba(15, 23, 42, 0.65)',
+                backdropFilter: 'blur(6px)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                zIndex: 1000,
+                padding: '20px',
+              }}
+            >
+              <motion.div
+                initial={{ scale: 0.95, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                exit={{ scale: 0.95, opacity: 0 }}
+                style={{
+                  background: '#ffffff',
+                  borderRadius: '16px',
+                  width: '100%',
+                  maxWidth: '520px',
+                  padding: '24px',
+                  boxShadow: '0 20px 40px rgba(0, 0, 0, 0.15)',
+                }}
+              >
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                    <div style={{ width: '36px', height: '36px', borderRadius: '50%', background: '#eff6ff', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                      <Server size={18} color="#0070ba" />
+                    </div>
+                    <div>
+                      <h3 style={{ fontSize: '1.05rem', fontWeight: 700, color: '#0f172a' }}>Backend API Connection</h3>
+                      <p style={{ fontSize: '0.76rem', color: '#64748b' }}>Configure or switch your active PayPact backend service</p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setServerModalOpen(false)}
+                    style={{ background: 'none', border: 'none', color: '#64748b', cursor: 'pointer', padding: '4px' }}
+                  >
+                    <X size={20} />
+                  </button>
+                </div>
+
+                {/* Status indicator */}
+                <div
+                  style={{
+                    padding: '10px 14px',
+                    borderRadius: '8px',
+                    marginBottom: '16px',
+                    background: healthStatus ? '#ecfdf5' : '#fef2f2',
+                    border: `1px solid ${healthStatus ? '#a7f3d0' : '#fecaca'}`,
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '10px',
+                    fontSize: '0.82rem',
+                    color: healthStatus ? '#065f46' : '#991b1b',
+                  }}
+                >
+                  <div
+                    style={{
+                      width: '8px',
+                      height: '8px',
+                      borderRadius: '50%',
+                      background: healthStatus ? '#10b981' : '#ef4444',
+                    }}
+                  />
+                  <span>
+                    Status:{' '}
+                    <strong>{healthStatus ? `Online (Mode: ${healthStatus.paypal_mode})` : 'Disconnected / Unreachable'}</strong>
+                  </span>
+                </div>
+
+                <div style={{ marginBottom: '16px' }}>
+                  <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 600, color: '#334155', marginBottom: '6px' }}>
+                    Backend Base API Endpoint
+                  </label>
+                  <input
+                    type="text"
+                    value={customBackendInput}
+                    onChange={(e) => setCustomBackendInput(e.target.value)}
+                    placeholder="https://paypact-backend.onrender.com/api"
+                    style={{
+                      width: '100%',
+                      padding: '10px 12px',
+                      borderRadius: '8px',
+                      border: '1px solid #cbd5e1',
+                      fontSize: '0.85rem',
+                      fontFamily: 'monospace',
+                    }}
+                  />
+                </div>
+
+                {/* Presets */}
+                <div style={{ marginBottom: '20px' }}>
+                  <div style={{ fontSize: '0.76rem', fontWeight: 600, color: '#64748b', marginBottom: '8px' }}>
+                    Quick Presets:
+                  </div>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                    <button
+                      type="button"
+                      onClick={() => setCustomBackendInput('https://paypact-backend.onrender.com/api')}
+                      className="btn btn-secondary"
+                      style={{ fontSize: '0.72rem', padding: '4px 10px' }}
+                    >
+                      ☁️ Render Cloud Backend
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setCustomBackendInput('/api')}
+                      className="btn btn-secondary"
+                      style={{ fontSize: '0.72rem', padding: '4px 10px' }}
+                    >
+                      ⚡ Same-Origin Proxy (/api)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setCustomBackendInput('http://localhost:8000/api')}
+                      className="btn btn-secondary"
+                      style={{ fontSize: '0.72rem', padding: '4px 10px' }}
+                    >
+                      💻 Localhost (:8000)
+                    </button>
+                  </div>
+                </div>
+
+                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (typeof window !== 'undefined') {
+                        localStorage.removeItem('paypact_backend_url');
+                      }
+                      setServerModalOpen(false);
+                      fetchHealth();
+                      fetchScenarios();
+                    }}
+                    className="btn btn-secondary"
+                    style={{ fontSize: '0.8rem', padding: '8px 14px' }}
+                  >
+                    Reset to Default
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (typeof window !== 'undefined' && customBackendInput.trim()) {
+                        const clean = customBackendInput.trim().replace(/\/+$/, '');
+                        const target = clean.endsWith('/api') ? clean : `${clean}/api`;
+                        localStorage.setItem('paypact_backend_url', target);
+                      }
+                      setServerModalOpen(false);
+                      fetchHealth();
+                      fetchScenarios();
+                    }}
+                    className="btn btn-primary"
+                    style={{ fontSize: '0.8rem', padding: '8px 16px' }}
+                  >
+                    Save & Reconnect
                   </button>
                 </div>
               </motion.div>

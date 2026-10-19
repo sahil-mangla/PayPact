@@ -43,7 +43,7 @@ services:
       - key: NEXT_PUBLIC_PAYPAL_CLIENT_ID
         sync: false
       - key: NEXT_PUBLIC_API_URL
-        value: ""
+        value: "https://paypact-backend.onrender.com"
       - key: BACKEND_INTERNAL_HOST
         fromService:
           type: web
