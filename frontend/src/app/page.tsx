@@ -34,43 +34,10 @@ import {
   FileWarning,
 } from 'lucide-react';
 
+import { WordByWordText } from '../components/WordByWordText';
+
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api';
 const PAYPAL_CLIENT_ID = process.env.NEXT_PUBLIC_PAYPAL_CLIENT_ID || '';
-
-// -------------------------------------------------------
-// Word-by-Word Text Animation Component (RewampUI Style)
-// -------------------------------------------------------
-function WordByWordText({
-  text,
-  className = '',
-  delay = 0,
-}: {
-  text: string;
-  className?: string;
-  delay?: number;
-}) {
-  const words = text.split(' ');
-
-  return (
-    <span className={className}>
-      {words.map((word, idx) => (
-        <motion.span
-          key={`${word}-${idx}`}
-          initial={{ opacity: 0, y: 5, filter: 'blur(4px)' }}
-          animate={{ opacity: 1, y: 0, filter: 'blur(0px)' }}
-          transition={{
-            duration: 0.22,
-            delay: delay + idx * 0.035,
-            ease: [0.16, 1, 0.3, 1],
-          }}
-          style={{ display: 'inline-block', marginRight: '0.28em' }}
-        >
-          {word}
-        </motion.span>
-      ))}
-    </span>
-  );
-}
 
 const DEFAULT_SCENARIOS = [
   { scenario_id: 'SC-A', name: 'Standard Approved Purchase', category: 'Standard', failure_type: 'None' },
@@ -1192,7 +1159,7 @@ export default function Home() {
                       <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                         <Lock size={16} color={policy.is_revoked ? '#dc2626' : '#0070ba'} />
                         <h4 style={{ fontSize: '0.92rem', fontWeight: 700, color: '#0f172a' }}>Active Policy Rules</h4>
-                        <span className="badge badge-neutral" style={{ fontSize: '0.66rem' }}>Policy ID: {policy.policy_id.slice(0, 10)}</span>
+                        <span className="badge badge-neutral" style={{ fontSize: '0.66rem' }}>Policy ID: {policy.policy_id?.slice(0, 10) || 'Active'}</span>
                       </div>
                       {policy.is_revoked ? (
                         <span className="badge badge-reject">Revoked</span>

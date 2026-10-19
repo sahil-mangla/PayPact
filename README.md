@@ -127,25 +127,34 @@ cd paypal-hack
 cp .env.example .env
 ```
 
-### 2. Start Backend API
+### 2. Start Backend API & Run Tests
 ```bash
 cd backend
 # Create virtual environment and install dependencies
-uv venv
+python3 -m venv .venv
 source .venv/bin/activate
-uv pip install -e ".[dev]"
+pip install -r requirements-dev.txt
 
-# Run tests
+# Run full backend test suite (61 tests covering swarm, policy engine, crypto verifier, edge cases)
 pytest -v
 
 # Start FastAPI server on port 8000
 python3 -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
-### 3. Start Next.js Frontend
+### 3. Start Next.js Frontend & Run Tests
 ```bash
 cd ../frontend
-npm install
+# Install dependencies
+npm install --legacy-peer-deps
+
+# Run frontend Vitest suite (12 tests covering dashboard, verifier, and UI components)
+npm test
+
+# Verify production build
+npm run build
+
+# Start Next.js development server
 npm run dev
 ```
 Open **[http://localhost:3000](http://localhost:3000)** in your browser.
@@ -158,7 +167,33 @@ cd ..
 
 ---
 
-## 5. Three Unified Interactive Views
+## 5. Automated CI/CD Pipeline (GitHub Actions)
+
+The repository includes a comprehensive GitHub Actions workflow [`.github/workflows/ci.yml`](.github/workflows/ci.yml) that executes on every push and pull request:
+
+- **Backend Matrix Job (`backend-tests`):** Evaluates Python 3.11 and 3.12 across all 61 unit, integration, and security tests.
+- **Frontend Job (`frontend-tests`):** Executes Vitest React Testing Library component tests, verifies TypeScript typing, and compiles an optimized Next.js 14 production bundle.
+- **Continuous Deployment Job (`deploy-render`):** Automatically triggers Render deployment webhooks when merging to `main`.
+
+---
+
+## 6. One-Click Cloud Deployment on Render
+
+APIL is pre-configured for automated deployment on [Render](https://render.com) using the included Infrastructure-as-Code blueprint [`render.yaml`](render.yaml).
+
+### Deploying via Render Blueprint:
+1. Push this repository to your GitHub account.
+2. In the Render Dashboard, click **New +** > **Blueprint**.
+3. Select your repository. Render will automatically detect [`render.yaml`](render.yaml) and declare two linked services:
+   - **`apil-backend` (Web Service, Python):** Runs FastAPI with Uvicorn.
+   - **`apil-frontend` (Web Service, Node):** Runs Next.js with optimized production server.
+4. (Optional) Provide your PayPal Sandbox credentials in the Render Dashboard environment settings:
+   - `PAYPAL_MODE`: `mock` (default for zero-dependency evaluations) or `live_sandbox`
+   - `PAYPAL_CLIENT_ID`: Your PayPal Developer Sandbox client ID
+   - `PAYPAL_CLIENT_SECRET`: Your PayPal Developer Sandbox client secret
+5. Click **Apply**. Both services will build, test, and deploy with HTTPS enabled.
+
+## 7. Three Unified Interactive Views
 
 The application provides a modern, high-trust white fintech interface with floating pill navigation and fluid micro-animations:
 
@@ -191,7 +226,7 @@ The application provides a modern, high-trust white fintech interface with float
 
 ---
 
-## 6. Security Boundaries & Threat Model
+## 8. Security Boundaries & Threat Model
 
 - **No Agent Payment Authority:** The LLM agent produces structured JSON proposals only. It has zero network access to PayPal APIs and zero knowledge of client secrets.
 - **Fail-Closed Arithmetic:** Line-item subtotals, taxes, and shipping are re-summed by the server. Any mathematical discrepancy immediately rejects the proposal.
@@ -201,7 +236,7 @@ The application provides a modern, high-trust white fintech interface with float
 
 ---
 
-## 7. Submission Details & Video Demo Script
+## 9. Submission Details & Video Demo Script
 
 - **Event:** PayPal AI Hackathon 2026 — *Build What's Next with PayPal and AI*
 - **Public Repository:** [github.com/sahilmangla/paypal-hack](https://github.com/sahilmangla/paypal-hack)
@@ -214,6 +249,6 @@ The application provides a modern, high-trust white fintech interface with float
 
 ---
 
-## 8. License
+## 10. License
 
 This project is licensed under the Apache License 2.0. See [LICENSE](LICENSE) for details.

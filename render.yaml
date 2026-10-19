@@ -1,0 +1,47 @@
+services:
+  # =========================================================================
+  # 1. APIL Backend API (FastAPI + Deterministic Policy Engine)
+  # =========================================================================
+  - type: web
+    name: apil-backend
+    runtime: python
+    rootDir: backend
+    plan: free
+    buildCommand: pip install --upgrade pip && pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /api/health
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.9
+      - key: PAYPAL_MODE
+        value: mock
+      - key: CORS_ORIGINS
+        value: "*"
+      - key: PAYPAL_CLIENT_ID
+        sync: false
+      - key: PAYPAL_CLIENT_SECRET
+        sync: false
+      - key: PAYPAL_WEBHOOK_ID
+        sync: false
+
+  # =========================================================================
+  # 2. APIL Frontend Web App (Next.js 14 + Aceternity UI + Tailwind)
+  # =========================================================================
+  - type: web
+    name: apil-frontend
+    runtime: node
+    rootDir: frontend
+    plan: free
+    buildCommand: npm install --legacy-peer-deps && npm run build
+    startCommand: npm run start
+    healthCheckPath: /
+    envVars:
+      - key: NODE_VERSION
+        value: 20.18.0
+      - key: NEXT_PUBLIC_PAYPAL_CLIENT_ID
+        sync: false
+      - key: NEXT_PUBLIC_API_URL
+        fromService:
+          type: web
+          name: apil-backend
+          property: host

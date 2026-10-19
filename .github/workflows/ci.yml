@@ -1,0 +1,96 @@
+name: APIL Continuous Integration & Quality Gate
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  backend-tests:
+    name: Backend Test Suite (FastAPI & Policy Engine)
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.12"]
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: "pip"
+
+      - name: Install Backend Dependencies
+        working-directory: ./backend
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+
+      - name: Run Backend Unit & Integration Tests (pytest)
+        working-directory: ./backend
+        env:
+          PAYPAL_MODE: mock
+          OLLAMA_FALLBACK: true
+        run: |
+          pytest -v --durations=10
+
+  frontend-tests:
+    name: Frontend Test Suite (Next.js & React Testing Library)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: "npm"
+          cache-dependency-path: frontend/package.json
+
+      - name: Install Frontend Dependencies
+        working-directory: ./frontend
+        run: |
+          npm install --legacy-peer-deps
+
+      - name: Run Vitest Unit & Integration Tests
+        working-directory: ./frontend
+        env:
+          NEXT_PUBLIC_PAYPAL_CLIENT_ID: test
+          NEXT_PUBLIC_API_URL: http://localhost:8000/api
+        run: |
+          npm test
+
+      - name: Build Next.js Production Bundle
+        working-directory: ./frontend
+        env:
+          NEXT_PUBLIC_PAYPAL_CLIENT_ID: test
+          NEXT_PUBLIC_API_URL: http://localhost:8000/api
+        run: |
+          npm run build
+
+  deploy-render:
+    name: Trigger Render Deployment (Optional CD Hook)
+    needs: [backend-tests, frontend-tests]
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    steps:
+      - name: Trigger Backend Render Deploy Hook
+        if: env.RENDER_BACKEND_HOOK != ''
+        env:
+          RENDER_BACKEND_HOOK: ${{ secrets.RENDER_BACKEND_DEPLOY_HOOK }}
+        run: |
+          curl -X POST "$RENDER_BACKEND_HOOK"
+
+      - name: Trigger Frontend Render Deploy Hook
+        if: env.RENDER_FRONTEND_HOOK != ''
+        env:
+          RENDER_FRONTEND_HOOK: ${{ secrets.RENDER_FRONTEND_DEPLOY_HOOK }}
+        run: |
+          curl -X POST "$RENDER_FRONTEND_HOOK"
