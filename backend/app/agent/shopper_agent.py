@@ -36,17 +36,26 @@ class ShopperAgent:
         auto_limit = 4000.00
         currency = "INR"
 
-        # 1. Attempt local Ollama inference
+        # 1. Attempt cloud Gemini or local Ollama inference
+        llm_data = None
         try:
-            from app.agent.ollama_client import OllamaClient
+            from app.agent.gemini_client import GeminiClient
 
-            ollama_data = OllamaClient.parse_intent(user_prompt)
+            llm_data = GeminiClient.parse_intent(user_prompt)
         except Exception:
-            ollama_data = None
+            llm_data = None
 
-        if ollama_data and isinstance(ollama_data, dict):
-            if "category" in ollama_data and ollama_data["category"]:
-                cat_str = str(ollama_data["category"]).lower()
+        if not llm_data:
+            try:
+                from app.agent.ollama_client import OllamaClient
+
+                llm_data = OllamaClient.parse_intent(user_prompt)
+            except Exception:
+                llm_data = None
+
+        if llm_data and isinstance(llm_data, dict):
+            if "category" in llm_data and llm_data["category"]:
+                cat_str = str(llm_data["category"]).lower()
                 if any(
                     k in cat_str
                     for k in ["flight", "travel", "hotel", "airline", "ticket"]
@@ -65,27 +74,27 @@ class ShopperAgent:
                     category = "computer monitor"
                 else:
                     category = cat_str
-            if "max_budget" in ollama_data and isinstance(
-                ollama_data["max_budget"], (int, float)
+            if "max_budget" in llm_data and isinstance(
+                llm_data["max_budget"], (int, float)
             ):
-                parsed_max = float(ollama_data["max_budget"])
+                parsed_max = float(llm_data["max_budget"])
                 if parsed_max > 0:
                     max_total = parsed_max
-            if "auto_buy_limit" in ollama_data and isinstance(
-                ollama_data["auto_buy_limit"], (int, float)
+            if "auto_buy_limit" in llm_data and isinstance(
+                llm_data["auto_buy_limit"], (int, float)
             ):
-                parsed_auto = float(ollama_data["auto_buy_limit"])
+                parsed_auto = float(llm_data["auto_buy_limit"])
                 if parsed_auto > 0:
                     auto_limit = min(parsed_auto, max_total)
                 else:
                     auto_limit = round(max_total * 0.8, 2)
             else:
                 auto_limit = round(max_total * 0.8, 2)
-            if "currency" in ollama_data and str(ollama_data["currency"]).upper() in [
+            if "currency" in llm_data and str(llm_data["currency"]).upper() in [
                 "INR",
                 "USD",
             ]:
-                currency = str(ollama_data["currency"]).upper()
+                currency = str(llm_data["currency"]).upper()
         else:
             # 2. Resilient heuristic fallback
             prompt_lower = user_prompt.lower()
@@ -305,12 +314,15 @@ class ShopperAgent:
         # Attach computed canonical fingerprint
         proposal.proposal_fingerprint = compute_proposal_fingerprint(proposal)
 
-        # Generate contextual recommendation rationale via local Ollama if available
+        # Generate contextual recommendation rationale via cloud Gemini or local Ollama
         explanation: str
-        try:
-            from app.agent.ollama_client import OllamaClient
+        rationale: Optional[str] = None
+        source_tag: str = ""
 
-            ollama_rationale = OllamaClient.generate_recommendation_rationale(
+        try:
+            from app.agent.gemini_client import GeminiClient
+
+            rationale = GeminiClient.generate_recommendation_rationale(
                 user_prompt=user_prompt,
                 product_name=target_product.name,
                 product_merchant=target_product.merchant,
@@ -318,17 +330,31 @@ class ShopperAgent:
                 currency=proposal.currency,
                 product_desc=target_product.description,
             )
-            if ollama_rationale:
-                explanation = (
-                    f"{ollama_rationale} [Inferred locally via Ollama qwen2.5-coder:7b]"
-                )
-            else:
-                explanation = (
-                    f"I recommend the '{target_product.name}' from {target_product.merchant}. "
-                    f"Unit price is {target_product.unit_price:.2f} {proposal.currency}. "
-                    f"{target_product.description}"
-                )
+            if rationale:
+                source_tag = "[Powered by Gemini 2.5 Flash]"
         except Exception:
+            rationale = None
+
+        if not rationale:
+            try:
+                from app.agent.ollama_client import OllamaClient
+
+                rationale = OllamaClient.generate_recommendation_rationale(
+                    user_prompt=user_prompt,
+                    product_name=target_product.name,
+                    product_merchant=target_product.merchant,
+                    unit_price=target_product.unit_price,
+                    currency=proposal.currency,
+                    product_desc=target_product.description,
+                )
+                if rationale:
+                    source_tag = "[Inferred locally via Ollama qwen2.5-coder:7b]"
+            except Exception:
+                rationale = None
+
+        if rationale:
+            explanation = f"{rationale} {source_tag}".strip()
+        else:
             explanation = (
                 f"I recommend the '{target_product.name}' from {target_product.merchant}. "
                 f"Unit price is {target_product.unit_price:.2f} {proposal.currency}. "

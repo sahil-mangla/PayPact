@@ -38,6 +38,16 @@ import { WordByWordText } from '../components/WordByWordText';
 import ParticleMorphOrb, { AiThinkingOrb, AiThinkingCard } from '../components/ui/ParticleMorphOrb';
 
 function getApiBaseUrl(): string {
+  if (typeof window !== 'undefined') {
+    const envUrl = process.env.NEXT_PUBLIC_API_URL;
+    // Only use envUrl if it is a valid public FQDN (contains '.' and not bare internal name like 'paypact-backend')
+    if (envUrl && envUrl.includes('.') && !envUrl.includes('localhost')) {
+      let url = envUrl.startsWith('http://') || envUrl.startsWith('https://') ? envUrl : `https://${envUrl}`;
+      return url.endsWith('/api') ? url : `${url.replace(/\/+$/, '')}/api`;
+    }
+    // Fallback to relative /api which proxies through Next.js rewrite safely on the same origin
+    return '/api';
+  }
   let url = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api';
   if (url && !url.startsWith('http://') && !url.startsWith('https://')) {
     url = `https://${url}`;

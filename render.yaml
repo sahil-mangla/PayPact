@@ -23,6 +23,8 @@ services:
         sync: false
       - key: PAYPAL_WEBHOOK_ID
         value: ""
+      - key: GEMINI_API_KEY
+        sync: false
 
   # =========================================================================
   # 2. PayPact Frontend Web App (Next.js 14 + Aceternity UI)
@@ -41,6 +43,8 @@ services:
       - key: NEXT_PUBLIC_PAYPAL_CLIENT_ID
         sync: false
       - key: NEXT_PUBLIC_API_URL
+        value: ""
+      - key: BACKEND_INTERNAL_HOST
         fromService:
           type: web
           name: paypact-backend
