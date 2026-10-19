@@ -158,22 +158,36 @@ cd ..
 
 ---
 
-## 5. Dual-Mode Product Demonstration
+## 5. Three Unified Interactive Views
 
-The application offers two unified experiences:
+The application provides a modern, high-trust white fintech interface with floating pill navigation and fluid micro-animations:
 
-1. **Autonomous Purchase Assistant (Consumer View):**
-   - Natural language search with automatic constraint parsing.
-   - Real-time Confirmed Authorization Policy card.
-   - Line-item proposal breakdown with computed SHA-256 fingerprint.
-   - Live interactive drift injector button (+₹850 shipping drift) for real-time judge demos.
-   - One-click PayPal Sandbox execution and verified settlement receipt.
+1. **Purchase Flow (Consumer & Adversarial Simulation View):**
+   - Natural language search with automatic constraint parsing (`/authorizations/parse-intent`).
+   - Multi-agent swarm team selection (`agent_hardware`, `agent_travel`, `agent_supplies`) with quota tracking.
+   - Word-by-word streaming animation for AI reasoning and product recommendations.
+   - 1-Click **Adversarial Attack Simulator Pills** to instantly test defenses against:
+     - 🚨 *Prompt Injection Bypass*
+     - 🛑 *Hard Budget Ceiling Breach (₹48k limit)*
+     - 📦 *Stealth Shipping Surcharge (+₹850 drift)*
+     - 🔀 *Rogue Item SKU Swap*
+   - Live PayPal Sandbox Orders API v2 execution with idempotent request tokens.
 
-2. **Integrity Lab (Judge & Benchmark View):**
-   - 1-click execution across the 7 failure scenarios.
-   - Side-by-side system selector (Baseline A vs Baseline B vs Proposed APIL).
-   - Live metrics dashboard (Unauthorized Spend Rate, Pass Rate, Latency).
-   - Cryptographic Audit Ledger timeline with SHA-256 hash chaining verification.
+2. **Policy Test Lab (Benchmark & Judge View):**
+   - 1-click automated benchmark execution across all 7 transaction failure scenarios.
+   - Side-by-side comparative architecture testing (Baseline A vs Baseline B vs Proposed APIL).
+   - Real-time quantitative cards: 100% Defense Rate, 0 Unauthorized Spends, <0.1 ms latency.
+   - Full comparative evaluation matrix.
+
+3. **Audit Trail & Cryptographic Verifier (Audit & Dispute Defense View):**
+   - Hash-chained immutable event timeline verifying chronological ledger integrity.
+   - **Interactive Drag-and-Drop Receipt Verifier**: Drop any `.json` receipt file to check validity.
+   - **1-Click Tamper Simulation**:
+     - *Verify Authentic Receipt*: Evaluates HMAC-SHA256 signature against canonical digest (100% match).
+     - *Simulate Tampered Amount (+₹1,000 Drift)*: Immediately flags cryptographic mismatch.
+     - *Simulate Tampered Merchant*: Detects vendor phishing and payload manipulation.
+   - Expandable in-card JSON inspector for dispute resolution review.
+   - Floating Navbar link directly to interactive OpenAPI docs (`/docs`).
 
 ---
 
