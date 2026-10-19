@@ -287,6 +287,27 @@ async def get_checkout_receipt(checkout_id: str):
         raise HTTPException(status_code=400, detail=str(e))
 
 
+@router.get("/receipt/sample")
+async def get_sample_receipt():
+    """Return an authentic cryptographically signed sample receipt for verifier testing."""
+    from app.crypto.receipts import generate_signed_receipt
+    return generate_signed_receipt(
+        checkout_id="chk_demo_sample_receipt",
+        decision="ALLOW",
+        status="PAID",
+        policy_id="pol_demo_standard",
+        policy_version=1,
+        proposal_fingerprint="e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        total_amount=3899.00,
+        currency="INR",
+        merchant="Keychron India Official",
+        items_count=1,
+        agent_id="agent_hardware",
+        paypal_order_id="5A123456789012345",
+        paypal_capture_id="CAP_9876543210987",
+    )
+
+
 @router.post("/receipt/verify")
 async def verify_receipt_endpoint(receipt: SignedAuditReceipt):
     """Verify cryptographic authenticity and tamper-resistance of a SignedAuditReceipt."""

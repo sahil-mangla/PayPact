@@ -274,3 +274,21 @@ code, pre, .font-mono {
 ::-webkit-scrollbar-thumb:hover {
   background: #94a3b8;
 }
+
+/* Interactive Verifier Dropzone */
+.dropzone-container {
+  border: 2px dashed #cbd5e1;
+  border-radius: 12px;
+  background: #f8fafc;
+  padding: 24px;
+  text-align: center;
+  transition: all 0.2s ease;
+  cursor: pointer;
+}
+
+.dropzone-container:hover,
+.dropzone-container.active {
+  border-color: #0070ba;
+  background: #eff6ff;
+}
+

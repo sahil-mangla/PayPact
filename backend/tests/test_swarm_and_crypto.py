@@ -280,3 +280,12 @@ async def test_api_receipt_and_simulate_webhook_endpoints():
         tamper_resp = await client.post("/api/receipt/verify", json=tampered_receipt)
         assert tamper_resp.status_code == 200
         assert tamper_resp.json()["valid"] is False
+
+        # 6. Sample receipt endpoint produces valid verifiable receipt
+        sample_resp = await client.get("/api/receipt/sample")
+        assert sample_resp.status_code == 200
+        sample_receipt = sample_resp.json()
+        assert sample_receipt["signature_algorithm"] == "HMAC-SHA256"
+        sample_verify = await client.post("/api/receipt/verify", json=sample_receipt)
+        assert sample_verify.status_code == 200
+        assert sample_verify.json()["valid"] is True
