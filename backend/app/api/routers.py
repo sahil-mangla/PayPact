@@ -19,6 +19,7 @@ from app.models.schemas import (
     AuthorizationPolicy,
     PolicyEvaluationResult,
     PurchaseProposal,
+    SignedAuditReceipt,
 )
 from app.state.machine import CheckoutSession, TransactionCoordinator
 
@@ -284,6 +285,20 @@ async def get_checkout_receipt(checkout_id: str):
         return coordinator.generate_audit_receipt(checkout_id)
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post("/receipt/verify")
+async def verify_receipt_endpoint(receipt: SignedAuditReceipt):
+    """Verify cryptographic authenticity and tamper-resistance of a SignedAuditReceipt."""
+    from app.crypto.receipts import verify_signed_receipt
+    is_valid = verify_signed_receipt(receipt)
+    return {
+        "valid": is_valid,
+        "receipt_id": receipt.receipt_id,
+        "checkout_id": receipt.checkout_id,
+        "algorithm": receipt.signature_algorithm,
+        "signer": receipt.signer_identity,
+    }
 
 
 @router.post("/webhooks/paypal")

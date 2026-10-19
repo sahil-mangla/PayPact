@@ -268,3 +268,15 @@ async def test_api_receipt_and_simulate_webhook_endpoints():
         )
         assert sim_resp.status_code == 200
         assert sim_resp.json()["session"]["state"] == "REFUNDED"
+
+        # 5. Verify signed receipt via verification endpoint
+        verify_resp = await client.post("/api/receipt/verify", json=receipt)
+        assert verify_resp.status_code == 200
+        assert verify_resp.json()["valid"] is True
+
+        # Tampered verification must be rejected
+        tampered_receipt = dict(receipt)
+        tampered_receipt["total_amount"] = 99999.00
+        tamper_resp = await client.post("/api/receipt/verify", json=tampered_receipt)
+        assert tamper_resp.status_code == 200
+        assert tamper_resp.json()["valid"] is False

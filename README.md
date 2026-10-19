@@ -3,7 +3,10 @@
 > **PayPal AI Hackathon 2026 Submission**  
 > *Build What's Next with PayPal and AI*  
 > **Repository:** [github.com/sahilmangla/paypal-hack](https://github.com/sahilmangla/paypal-hack)  
+> **Launch Video:** [brag-output/brag.mp4](brag-output/brag.mp4) (20s 1080p Launch Showcase)  
 > **License:** Apache 2.0  
+
+[![APIL Launch Video Poster](brag-output/brag.jpg)](brag-output/brag.mp4)
 
 ---
 
@@ -14,6 +17,7 @@ AI agents can interpret natural language purchase goals and invoke tools, but **
 - **Price & Fee Drift:** An item is proposed at $45, but checkout adds taxes or $20 shipping.
 - **Product / Variant Substitution:** The seller or agent silently changes the SKU or variant.
 - **Revoked Authorization:** The user revokes or adjusts spending limits while an agent task is in-flight.
+- **Multi-Agent Cross-Depletion:** Parallel sub-agents running asynchronously can deplete shared project budgets without coordination.
 - **Duplicate Submissions:** Network dropouts cause double clicks or blind retries that double-bill the buyer.
 - **Prompt Injection:** Adversarial product descriptions hijack the LLM to authorize unrelated purchases.
 
@@ -22,11 +26,13 @@ A valid model output or technically valid payment request is **not** proof that 
 ### The APIL Solution
 **APIL (Agent Payment Integrity Layer)** enforces an architectural barrier between probabilistic AI recommendation and deterministic payment execution:
 1. **Immutable User Policy:** User-confirmed budget constraints are versioned and can never be altered by the LLM.
-2. **Canonical Proposal Fingerprinting:** Every recommendation is canonicalized and hashed via SHA-256 (binding exact SKU, merchant, line-items, taxes, and shipping).
-3. **Deterministic Policy Gate:** Pure logic without LLM hallucinations decides `ALLOW`, `REQUIRE_APPROVAL`, or `REJECT`.
-4. **Pre-Execution Invariant Gate:** Immediately prior to invoking the PayPal Orders API, the exact transaction payload is re-verified against live merchant state and current policy version.
-5. **Idempotency & Reconciled State Machine:** `PayPal-Request-Id` and atomic state transitions protect against double-charging during network ambiguities.
-6. **Integrity Lab:** A live comparative testbed running Scenarios A through G against Baseline A (No checks), Baseline B (Static pre-checks), and the Proposed System (Lifecycle verification).
+2. **Hierarchical Swarm Quota Trees:** Sub-agents (`agent_hardware`, `agent_travel`, `agent_supplies`) receive non-fungible quotas with atomic dual-decrementing against master ceilings.
+3. **Canonical Proposal Fingerprinting:** Every recommendation is canonicalized and hashed via SHA-256 (binding exact SKU, merchant, line-items, taxes, and shipping).
+4. **Deterministic Pre-Execution Invariant Gate:** Immediately prior to invoking the PayPal Orders API, the exact transaction payload is re-verified against live merchant state and current policy version.
+5. **Digitally Signed HMAC-SHA256 Receipts:** Every approved payment, dispute, or refusal exports an immutable signed receipt (`GET /api/checkouts/{id}/receipt`, verified via `POST /api/receipt/verify`).
+6. **Async Webhook Reconciliation:** Handles `PAYMENT.CAPTURE.REFUNDED` and `CUSTOMER.DISPUTE.CREATED` events with automatic quota restoration.
+7. **Idempotency & Reconciled State Machine:** `PayPal-Request-Id` and atomic state transitions protect against double-charging during network ambiguities.
+8. **Integrity Lab:** A live comparative testbed running Scenarios A through G against Baseline A (No checks), Baseline B (Static pre-checks), and the Proposed System (Lifecycle verification).
 
 ---
 
