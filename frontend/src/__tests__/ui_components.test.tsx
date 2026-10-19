@@ -66,7 +66,7 @@ describe('Main Dashboard Layout & Navigation', () => {
   it('renders the Aceternity-style floating pill navigation with all 3 core tabs', () => {
     render(<Home />);
     
-    expect(screen.getByText('APIL')).toBeInTheDocument();
+    expect(screen.getByText('PayPact')).toBeInTheDocument();
     expect(screen.getByText('Purchase Flow')).toBeInTheDocument();
     expect(screen.getByText('Policy Test Lab')).toBeInTheDocument();
     expect(screen.getByText('Audit Trail')).toBeInTheDocument();
