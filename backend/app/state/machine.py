@@ -1,5 +1,4 @@
-from __future__ import annotations
-
+import asyncio
 import uuid
 from typing import Dict, Optional
 from pydantic import BaseModel, Field
@@ -45,6 +44,7 @@ class TransactionCoordinator:
         self._sessions: Dict[str, CheckoutSession] = {}
         self._policies: Dict[str, AuthorizationPolicy] = {}
         self._idempotency_map: Dict[str, str] = {}  # idempotency_key -> checkout_id
+        self._execution_locks: Dict[str, asyncio.Lock] = {}
 
     def register_policy(self, policy: AuthorizationPolicy) -> AuthorizationPolicy:
         self._policies[policy.policy_id] = policy
@@ -185,107 +185,111 @@ class TransactionCoordinator:
         if not session:
             raise ValueError(f"Checkout '{checkout_id}' not found.")
 
-        # 1. Idempotency Check: Already captured?
-        if session.state == TransactionState.PAID:
-            self.audit_ledger.record_event(
-                event_type="DUPLICATE_EXECUTION_BLOCKED",
-                checkout_id=checkout_id,
-                reason="Attempted to execute payment on already PAID checkout. Blocked safely.",
-            )
-            return session
+        if checkout_id not in self._execution_locks:
+            self._execution_locks[checkout_id] = asyncio.Lock()
 
-        # Verify state is AUTHORIZED
-        if session.state != TransactionState.AUTHORIZED:
-            raise ValueError(f"Cannot execute checkout in state '{session.state}'. Must be AUTHORIZED.")
-
-        # 2. Pre-Execution Invariant Gate
-        # Check against latest policy state and live merchant proposal data
-        policy = self._policies.get(session.policy_id)
-        if not policy:
-            session.state = TransactionState.FAILED
-            session.failure_reason = "Policy not found during pre-execution."
-            return session
-
-        # If live merchant data has drifted (e.g. price change, tax added), use it
-        live_proposal = current_proposal_state or session.proposal
-
-        reval = DeterministicPolicyEngine.revalidate_pre_execution(
-            proposal=live_proposal,
-            policy=policy,
-            approved_fingerprint=session.approved_fingerprint,
-        )
-
-        if reval.decision != PolicyDecisionType.ALLOW:
-            # Drift or revocation caught!
-            session.state = TransactionState.POLICY_REJECTED
-            session.failure_reason = reval.primary_reason
-            self.audit_ledger.record_event(
-                event_type="PRE_EXECUTION_BLOCKED",
-                checkout_id=checkout_id,
-                policy_version=policy.version,
-                proposal_fingerprint=reval.proposal_fingerprint,
-                decision=reval.decision.value,
-                reason=reval.primary_reason,
-            )
-            return session
-
-        # 3. Create PayPal Order
-        req_id = idempotency_key or session.idempotency_key
-        try:
-            order_resp: PayPalOrderResponse = await self.paypal_client.create_order(
-                proposal=live_proposal,
-                request_id=req_id,
-            )
-            session.paypal_order_id = order_resp.order_id
-            session.state = TransactionState.CHECKOUT_CREATED
-
-            self.audit_ledger.record_event(
-                event_type="CHECKOUT_CREATED",
-                checkout_id=checkout_id,
-                policy_version=policy.version,
-                proposal_fingerprint=live_proposal.proposal_fingerprint,
-                reason=f"PayPal order created with ID {order_resp.order_id}",
-            )
-        except Exception as e:
-            session.state = TransactionState.FAILED
-            session.failure_reason = f"PayPal create order failed: {str(e)}"
-            return session
-
-        # 4. Capture Order
-        if simulate_timeout:
-            # Ambiguous timeout scenario (Scenario G)
-            session.state = TransactionState.RECONCILIATION_REQUIRED
-            session.failure_reason = "Network timeout during capture. Gateway state ambiguous."
-            self.audit_ledger.record_event(
-                event_type="PAYMENT_AMBIGUOUS_TIMEOUT",
-                checkout_id=checkout_id,
-                reason="Timeout during payment capture. Marked for reconciliation without blind retry.",
-            )
-            return session
-
-        try:
-            capture_resp: PayPalOrderResponse = await self.paypal_client.capture_order(
-                order_id=session.paypal_order_id,
-                request_id=f"{req_id}_cap",
-            )
-            if capture_resp.status == "COMPLETED":
-                session.state = TransactionState.PAID
-                session.paypal_capture_id = capture_resp.capture_id
+        async with self._execution_locks[checkout_id]:
+            # 1. Idempotency Check: Already captured?
+            if session.state == TransactionState.PAID:
                 self.audit_ledger.record_event(
-                    event_type="PAYMENT_COMPLETED",
+                    event_type="DUPLICATE_EXECUTION_BLOCKED",
+                    checkout_id=checkout_id,
+                    reason="Attempted to execute payment on already PAID checkout. Blocked safely.",
+                )
+                return session
+
+            # Verify state is AUTHORIZED
+            if session.state != TransactionState.AUTHORIZED:
+                raise ValueError(f"Cannot execute checkout in state '{session.state}'. Must be AUTHORIZED.")
+
+            # 2. Pre-Execution Invariant Gate
+            # Check against latest policy state and live merchant proposal data
+            policy = self._policies.get(session.policy_id)
+            if not policy:
+                session.state = TransactionState.FAILED
+                session.failure_reason = "Policy not found during pre-execution."
+                return session
+
+            # If live merchant data has drifted (e.g. price change, tax added), use it
+            live_proposal = current_proposal_state or session.proposal
+
+            reval = DeterministicPolicyEngine.revalidate_pre_execution(
+                proposal=live_proposal,
+                policy=policy,
+                approved_fingerprint=session.approved_fingerprint,
+            )
+
+            if reval.decision != PolicyDecisionType.ALLOW:
+                # Drift or revocation caught!
+                session.state = TransactionState.POLICY_REJECTED
+                session.failure_reason = reval.primary_reason
+                self.audit_ledger.record_event(
+                    event_type="PRE_EXECUTION_BLOCKED",
+                    checkout_id=checkout_id,
+                    policy_version=policy.version,
+                    proposal_fingerprint=reval.proposal_fingerprint,
+                    decision=reval.decision.value,
+                    reason=reval.primary_reason,
+                )
+                return session
+
+            # 3. Create PayPal Order
+            req_id = idempotency_key or session.idempotency_key
+            try:
+                order_resp: PayPalOrderResponse = await self.paypal_client.create_order(
+                    proposal=live_proposal,
+                    request_id=req_id,
+                )
+                session.paypal_order_id = order_resp.order_id
+                session.state = TransactionState.CHECKOUT_CREATED
+
+                self.audit_ledger.record_event(
+                    event_type="CHECKOUT_CREATED",
                     checkout_id=checkout_id,
                     policy_version=policy.version,
                     proposal_fingerprint=live_proposal.proposal_fingerprint,
-                    reason=f"Payment captured successfully with capture ID {capture_resp.capture_id}",
+                    reason=f"PayPal order created with ID {order_resp.order_id}",
                 )
-            else:
+            except Exception as e:
                 session.state = TransactionState.FAILED
-                session.failure_reason = f"PayPal returned status: {capture_resp.status}"
-        except Exception as e:
-            session.state = TransactionState.RECONCILIATION_REQUIRED
-            session.failure_reason = f"PayPal capture error: {str(e)}"
+                session.failure_reason = f"PayPal create order failed: {str(e)}"
+                return session
 
-        return session
+            # 4. Capture Order
+            if simulate_timeout:
+                # Ambiguous timeout scenario (Scenario G)
+                session.state = TransactionState.RECONCILIATION_REQUIRED
+                session.failure_reason = "Network timeout during capture. Gateway state ambiguous."
+                self.audit_ledger.record_event(
+                    event_type="PAYMENT_AMBIGUOUS_TIMEOUT",
+                    checkout_id=checkout_id,
+                    reason="Timeout during payment capture. Marked for reconciliation without blind retry.",
+                )
+                return session
+
+            try:
+                capture_resp: PayPalOrderResponse = await self.paypal_client.capture_order(
+                    order_id=session.paypal_order_id,
+                    request_id=f"{req_id}_cap",
+                )
+                if capture_resp.status == "COMPLETED":
+                    session.state = TransactionState.PAID
+                    session.paypal_capture_id = capture_resp.capture_id
+                    self.audit_ledger.record_event(
+                        event_type="PAYMENT_COMPLETED",
+                        checkout_id=checkout_id,
+                        policy_version=policy.version,
+                        proposal_fingerprint=live_proposal.proposal_fingerprint,
+                        reason=f"Payment captured successfully with capture ID {capture_resp.capture_id}",
+                    )
+                else:
+                    session.state = TransactionState.FAILED
+                    session.failure_reason = f"PayPal returned status: {capture_resp.status}"
+            except Exception as e:
+                session.state = TransactionState.RECONCILIATION_REQUIRED
+                session.failure_reason = f"PayPal capture error: {str(e)}"
+
+            return session
 
     async def reconcile_timeout(self, checkout_id: str) -> CheckoutSession:
         """Reconcile ambiguous timeout with PayPal."""

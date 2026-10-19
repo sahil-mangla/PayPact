@@ -7,7 +7,11 @@ from app.models.schemas import LineItem, PurchaseProposal
 def normalize_items_for_fingerprint(items: List[LineItem]) -> List[Dict[str, Any]]:
     """Normalize line items: sort by SKU, format unit_price as 2-decimal string."""
     normalized = []
-    for item in sorted(items, key=lambda x: x.sku):
+    # Multi-key sorting guarantees 100% deterministic order even with duplicate SKUs
+    for item in sorted(
+        items,
+        key=lambda x: (x.sku.strip(), f"{x.unit_price:.2f}", x.name.strip(), x.quantity),
+    ):
         normalized.append({
             "sku": item.sku.strip(),
             "name": item.name.strip(),

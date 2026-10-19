@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, List, Optional
@@ -36,6 +37,8 @@ class LineItem(BaseModel):
     @field_validator("unit_price")
     @classmethod
     def round_unit_price(cls, v: float) -> float:
+        if not math.isfinite(v):
+            raise ValueError("unit_price must be a finite numerical value")
         return round(v, 2)
 
 
@@ -60,6 +63,8 @@ class AuthorizationPolicy(BaseModel):
     @field_validator("maximum_total", "automatic_purchase_limit")
     @classmethod
     def round_limits(cls, v: float) -> float:
+        if not math.isfinite(v):
+            raise ValueError("Policy limits must be finite numerical values")
         return round(v, 2)
 
     @field_validator("automatic_purchase_limit")
@@ -89,12 +94,17 @@ class PurchaseProposal(BaseModel):
     @field_validator("item_subtotal", "shipping_fee", "tax_fee", "total_amount")
     @classmethod
     def round_currency_fields(cls, v: float) -> float:
+        if not math.isfinite(v):
+            raise ValueError("Proposal monetary fields must be finite numerical values")
         return round(v, 2)
 
     @field_validator("currency")
     @classmethod
     def uppercase_currency(cls, v: str) -> str:
-        return v.strip().upper()
+        clean = v.strip().upper()
+        if not clean.isalpha() or len(clean) != 3:
+            raise ValueError(f"Currency must be a 3-letter alphabetic code (e.g. USD, INR), got '{v}'")
+        return clean
 
 
 class IntegrityCheckResult(BaseModel):
