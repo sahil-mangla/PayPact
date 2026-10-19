@@ -48,6 +48,11 @@ class TransactionCoordinator:
         self._idempotency_map: Dict[str, str] = {}  # idempotency_key -> checkout_id
         self._execution_locks: Dict[str, asyncio.Lock] = {}
 
+    def _get_execution_lock(self, checkout_id: str) -> asyncio.Lock:
+        if checkout_id not in self._execution_locks:
+            self._execution_locks[checkout_id] = asyncio.Lock()
+        return self._execution_locks[checkout_id]
+
     def register_policy(self, policy: AuthorizationPolicy) -> AuthorizationPolicy:
         self._policies[policy.policy_id] = policy
         self.audit_ledger.record_event(
@@ -187,10 +192,8 @@ class TransactionCoordinator:
         if not session:
             raise ValueError(f"Checkout '{checkout_id}' not found.")
 
-        if checkout_id not in self._execution_locks:
-            self._execution_locks[checkout_id] = asyncio.Lock()
-
-        async with self._execution_locks[checkout_id]:
+        lock = self._get_execution_lock(checkout_id)
+        async with lock:
             # 1. Idempotency Check: Already captured?
             if session.state == TransactionState.PAID:
                 self.audit_ledger.record_event(
@@ -310,10 +313,8 @@ class TransactionCoordinator:
         if not session:
             raise ValueError(f"Checkout '{checkout_id}' not found.")
 
-        if checkout_id not in self._execution_locks:
-            self._execution_locks[checkout_id] = asyncio.Lock()
-
-        async with self._execution_locks[checkout_id]:
+        lock = self._get_execution_lock(checkout_id)
+        async with lock:
             if session.state == TransactionState.PAID:
                 return session
 
@@ -345,6 +346,17 @@ class TransactionCoordinator:
                     proposal_fingerprint=reval.proposal_fingerprint,
                     decision=reval.decision.value,
                     reason=reval.primary_reason,
+                )
+                return session
+
+            # Check timeout simulation for live sandbox
+            if simulate_timeout:
+                session.state = TransactionState.RECONCILIATION_REQUIRED
+                session.failure_reason = "Network timeout during capture. Gateway state ambiguous."
+                self.audit_ledger.record_event(
+                    event_type="PAYMENT_AMBIGUOUS_TIMEOUT",
+                    checkout_id=checkout_id,
+                    reason="Timeout during payment creation/capture. Marked for reconciliation without blind retry.",
                 )
                 return session
 
@@ -387,10 +399,8 @@ class TransactionCoordinator:
                 "Potential tampering detected."
             )
 
-        if checkout_id not in self._execution_locks:
-            self._execution_locks[checkout_id] = asyncio.Lock()
-
-        async with self._execution_locks[checkout_id]:
+        lock = self._get_execution_lock(checkout_id)
+        async with lock:
             if session.state == TransactionState.PAID:
                 return session
 
@@ -433,6 +443,11 @@ class TransactionCoordinator:
         if details.status == "COMPLETED":
             session.state = TransactionState.PAID
             session.paypal_capture_id = details.capture_id
+            self._record_spend(
+                policy_id=session.policy_id,
+                amount=session.proposal.total_amount,
+                agent_id=session.proposal.agent_id,
+            )
             self.audit_ledger.record_event(
                 event_type="RECONCILIATION_SUCCESS",
                 checkout_id=checkout_id,
@@ -494,7 +509,8 @@ class TransactionCoordinator:
 
         if event_type in ("PAYMENT.CAPTURE.REFUNDED", "PAYMENT.SALE.REFUNDED"):
             session.state = TransactionState.REFUNDED
-            amount_val = float(resource.get("amount", {}).get("value", session.proposal.total_amount))
+            amount_dict = resource.get("amount") or {}
+            amount_val = float(amount_dict.get("value") or session.proposal.total_amount)
             self._record_refund(
                 policy_id=session.policy_id,
                 amount=amount_val,

@@ -85,6 +85,54 @@ CATALOGUE: List[Product] = [
         drift_shipping_fee=850.00,  # Later added at checkout
         drift_sku="KB-DRIFT-01-SUBSTITUTED",
     ),
+    Product(
+        sku="TR-FLIGHT-BLR",
+        name="IndiGo Flight 6E-204 (DEL -> BLR Economy Flight Ticket)",
+        description="Confirmed economy class flight seat from New Delhi to Bengaluru with 15kg check-in baggage and meal included.",
+        category="travel",
+        merchant="IndiGo Corporate",
+        unit_price=4299.00,
+        shipping_fee=0.00,
+        tax_fee=0.00,
+        currency="INR",
+        in_stock=True,
+    ),
+    Product(
+        sku="TR-HOTEL-BLR",
+        name="The Chancery Pavilion Hotel Bangalore (1-Night Stay)",
+        description="Executive Deluxe Room in central Bengaluru with complimentary high-speed Wi-Fi and buffet breakfast.",
+        category="travel",
+        merchant="Marriott Corporate Portal",
+        unit_price=4650.00,
+        shipping_fee=0.00,
+        tax_fee=0.00,
+        currency="INR",
+        in_stock=True,
+    ),
+    Product(
+        sku="SP-DESK-MAT-BRASS",
+        name="Artisan Brass Accent Felt Desk Mat & Memory Foam Wrist Rest",
+        description="Waterproof felt desk mat (900x400mm) with brushed brass logo emblem and anti-slip rubber base.",
+        category="office supplies",
+        merchant="Keychron India",
+        unit_price=1899.00,
+        shipping_fee=0.00,
+        tax_fee=0.00,
+        currency="INR",
+        in_stock=True,
+    ),
+    Product(
+        sku="SP-ALUM-DOCK",
+        name="CNC Anodized Aluminum Desktop Organizer Dock",
+        description="Precision machined aerospace aluminum desktop dock with integrated magnetic cable routing.",
+        category="office supplies",
+        merchant="DeskSpace Supplies",
+        unit_price=1450.00,
+        shipping_fee=0.00,
+        tax_fee=0.00,
+        currency="INR",
+        in_stock=True,
+    ),
 ]
 
 
@@ -95,14 +143,75 @@ def get_product_by_sku(sku: str) -> Optional[Product]:
     return None
 
 
-def search_catalogue(query: str, max_results: int = 5) -> List[Product]:
+def search_catalogue(query: str, category_filter: Optional[str] = None, max_results: int = 5) -> List[Product]:
+    import re
     q = query.lower()
-    matches = []
+    stop_words = {"a", "an", "the", "under", "for", "to", "find", "book", "order", "search", "with", "and", "in", "of", "please", "suitable", "want", "need"}
+    raw_tokens = [w for w in re.findall(r"\w+", q) if w not in stop_words and len(w) > 2 and not w.isdigit()]
+
+    # Synonym and stemming expansions
+    SYNONYM_MAP = {
+        "flights": ["flight", "ticket", "airline", "indigo", "travel"],
+        "flight": ["flights", "ticket", "airline", "indigo", "travel"],
+        "bangalore": ["blr", "bengaluru", "bangalore"],
+        "bengaluru": ["blr", "bangalore", "bengaluru"],
+        "delhi": ["del", "new delhi", "delhi"],
+        "hotel": ["hotel", "stay", "room", "chancery", "marriott", "travel"],
+        "hotels": ["hotel", "stay", "room", "chancery", "marriott", "travel"],
+        "keyboard": ["keyboard", "mechanical", "keychron", "typing", "switch", "switches"],
+        "keyboards": ["keyboard", "mechanical", "keychron", "switch"],
+        "mat": ["desk mat", "felt", "wrist rest", "office supplies"],
+        "dock": ["organizer", "dock", "aluminum", "office supplies"],
+        "supplies": ["desk mat", "dock", "office supplies"],
+    }
+
+    expanded_tokens = set(raw_tokens)
+    for t in raw_tokens:
+        stemmed = t.rstrip("s")
+        if len(stemmed) > 2:
+            expanded_tokens.add(stemmed)
+        if t in SYNONYM_MAP:
+            expanded_tokens.update(SYNONYM_MAP[t])
+
+    scored = []
     for product in CATALOGUE:
-        if (
-            q in product.name.lower()
-            or q in product.category.lower()
-            or q in product.description.lower()
-        ):
-            matches.append(product)
-    return matches[:max_results] or CATALOGUE[:max_results]
+        score = 0
+        p_name = product.name.lower()
+        p_cat = product.category.lower()
+        p_desc = product.description.lower()
+
+        # Category match boost
+        if category_filter:
+            c_norm = category_filter.lower().strip()
+            if c_norm in p_cat or p_cat in c_norm:
+                score += 35
+            else:
+                score -= 10  # Deprioritize products outside the active category
+
+        # Exact query phrase match
+        if q in p_name or q in p_desc:
+            score += 25
+
+        # Token matches
+        for t in expanded_tokens:
+            if t in p_name:
+                score += 8
+            elif t in p_cat:
+                score += 6
+            elif t in p_desc:
+                score += 3
+
+        if score > 0:
+            scored.append((score, product))
+
+    scored.sort(key=lambda x: x[0], reverse=True)
+    if scored:
+        return [p for _, p in scored[:max_results]]
+
+    if category_filter:
+        cat_matches = [p for p in CATALOGUE if category_filter.lower() in p.category.lower() or p.category.lower() in category_filter.lower()]
+        if cat_matches:
+            return cat_matches[:max_results]
+
+    return CATALOGUE[:max_results]
+

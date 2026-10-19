@@ -46,7 +46,11 @@ class ShopperAgent:
         if ollama_data and isinstance(ollama_data, dict):
             if "category" in ollama_data and ollama_data["category"]:
                 cat_str = str(ollama_data["category"]).lower()
-                if "keyboard" in cat_str:
+                if any(k in cat_str for k in ["flight", "travel", "hotel", "airline", "ticket"]):
+                    category = "travel"
+                elif any(k in cat_str for k in ["mat", "dock", "supplies", "desk", "organizer", "wrist"]):
+                    category = "office supplies"
+                elif "keyboard" in cat_str:
                     category = "mechanical keyboard"
                 elif "mouse" in cat_str:
                     category = "computer mouse"
@@ -79,11 +83,13 @@ class ShopperAgent:
                 currency = "INR"
 
             # Extract numerical limits (budget and auto-threshold)
-            numbers = re.findall(r"(?:₹|\$|rs\.?|inr)?\s*([0-9]{1,3}(?:,[0-9]{3})*(?:\.[0-9]{2})?|[0-9]+)", prompt_lower)
+            raw_matches = re.findall(r"(?:₹|\$|rs\.?|inr)?\s*((?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d{1,2})?)", prompt_lower)
             clean_nums = []
-            for n in numbers:
+            for n in raw_matches:
                 try:
-                    clean_nums.append(float(n.replace(",", "")))
+                    val = float(n.replace(",", ""))
+                    if val > 0:
+                        clean_nums.append(val)
                 except ValueError:
                     continue
 
@@ -96,17 +102,31 @@ class ShopperAgent:
                 auto_limit = round(max_total * 0.8, 2)
 
             # Detect category
-            if "keyboard" in prompt_lower:
+            if any(k in prompt_lower for k in ["flight", "flights", "hotel", "ticket", "tickets", "bangalore", "blr", "delhi", "airline", "travel", "transit"]):
+                category = "travel"
+            elif any(k in prompt_lower for k in ["mat", "mats", "wrist", "dock", "supplies", "desk", "cable", "organizer", "tray"]):
+                category = "office supplies"
+            elif any(k in prompt_lower for k in ["keyboard", "keyboards", "switch", "switches", "keycap", "keycaps", "keychron", "meckeys", "typing"]):
                 category = "mechanical keyboard"
             elif "mouse" in prompt_lower:
                 category = "computer mouse"
             elif "monitor" in prompt_lower:
                 category = "computer monitor"
 
-        # Default Swarm Hierarchy Allocation across specialized agent personas
-        hw_quota = max_total
-        tr_quota = round(max_total * 0.50, 2)
-        su_quota = round(max_total * 0.30, 2)
+        # Swarm Hierarchy Allocation prioritized for the requested category
+        if category == "travel":
+            tr_quota = max_total
+            hw_quota = round(max_total * 0.50, 2)
+            su_quota = round(max_total * 0.30, 2)
+        elif category == "office supplies":
+            su_quota = max_total
+            hw_quota = round(max_total * 0.60, 2)
+            tr_quota = round(max_total * 0.40, 2)
+        else:
+            hw_quota = max_total
+            tr_quota = round(max_total * 0.50, 2)
+            su_quota = round(max_total * 0.30, 2)
+
         quotas = {
             "agent_hardware": AgentQuota(
                 agent_id="agent_hardware",
@@ -131,6 +151,15 @@ class ShopperAgent:
             ),
         }
 
+        # Whitelist all verified merchants in our authorized catalogue
+        all_merchants = [
+            "Keychron India",
+            "Meckeys",
+            "IndiGo Corporate",
+            "Marriott Corporate Portal",
+            "DeskSpace Supplies",
+        ]
+
         return AuthorizationPolicy(
             policy_id=f"pol_{uuid.uuid4().hex[:8]}",
             version=1,
@@ -140,7 +169,7 @@ class ShopperAgent:
             spent_total=0.0,
             automatic_purchase_limit=auto_limit,
             allowed_currencies=[currency, "USD" if currency == "INR" else "INR"],
-            allowed_merchants=["Keychron India", "Meckeys"],
+            allowed_merchants=all_merchants,
             require_approval_above_limit=True,
             is_revoked=False,
             agent_quotas=quotas,
@@ -160,11 +189,19 @@ class ShopperAgent:
         if preferred_sku:
             target_product = get_product_by_sku(preferred_sku)
 
+        # Map agent persona to its designated operational domain
+        agent_category_map = {
+            "agent_travel": "travel",
+            "agent_supplies": "office supplies",
+            "agent_hardware": "mechanical keyboard",
+        }
+        preferred_cat = agent_category_map.get(agent_id or "") or policy.product_category
+
         if not target_product:
-            candidates = search_catalogue(user_prompt)
-            # Find best candidate within category
+            candidates = search_catalogue(user_prompt, category_filter=preferred_cat)
+            # Find best candidate within target category
             for cand in candidates:
-                if policy.product_category and policy.product_category.lower() in cand.category.lower():
+                if preferred_cat and (preferred_cat.lower() in cand.category.lower() or cand.category.lower() in preferred_cat.lower()):
                     target_product = cand
                     break
             if not target_product and candidates:

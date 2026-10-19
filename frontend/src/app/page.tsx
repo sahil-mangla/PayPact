@@ -364,7 +364,12 @@ export default function Home() {
   };
 
   // Intent parsing → rule registration → item proposal
-  const handleParsePolicy = async () => {
+  const handleParsePolicy = async (promptOverride?: string, agentOverride?: string) => {
+    const activePrompt = promptOverride !== undefined ? promptOverride : prompt;
+    const activeAgent = agentOverride || selectedAgent;
+    if (promptOverride !== undefined) setPrompt(promptOverride);
+    if (agentOverride) setSelectedAgent(agentOverride as any);
+
     setLoading(true);
     setErrorMsg(null);
     setProposalRes(null);
@@ -379,7 +384,7 @@ export default function Home() {
       const parseRes = await fetch(`${API_BASE}/authorizations/parse-intent`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt, user_id: 'usr_shopper' }),
+        body: JSON.stringify({ prompt: activePrompt, user_id: 'usr_shopper' }),
       });
       if (!parseRes.ok) throw new Error('Could not parse purchase goal.');
       const parsedPolicy = await parseRes.json();
@@ -399,7 +404,7 @@ export default function Home() {
       setPipelineStep(3);
 
       // 3. Generate proposal
-      await handleGenerateProposal(savedPolicy.policy_id);
+      await handleGenerateProposal(savedPolicy.policy_id, activeAgent, activePrompt);
     } catch (err: any) {
       setErrorMsg(err.message || 'Error processing request');
       setPipelineStep(1);
@@ -408,13 +413,14 @@ export default function Home() {
     }
   };
 
-  const handleGenerateProposal = async (policyId: string, agentOverride?: string) => {
+  const handleGenerateProposal = async (policyId: string, agentOverride?: string, promptOverride?: string) => {
     try {
       const activeAgent = agentOverride || selectedAgent;
+      const activePrompt = promptOverride !== undefined ? promptOverride : prompt;
       const propRes = await fetch(`${API_BASE}/proposals`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt, policy_id: policyId, agent_id: activeAgent }),
+        body: JSON.stringify({ prompt: activePrompt, policy_id: policyId, agent_id: activeAgent }),
       });
       if (!propRes.ok) {
         const err = await propRes.json();
@@ -530,6 +536,9 @@ export default function Home() {
       if (!res.ok || session?.state === 'POLICY_REJECTED') {
         setErrorMsg(session?.failure_reason || data.detail || 'Blocked by policy rules');
         setPipelineBlocked(true);
+      } else if (data.needs_buyer_approval) {
+        // In live sandbox, buyer must approve in PayPal popup; stay at approval/checkout step
+        setPipelineStep(4);
       } else {
         setPipelineStep(5);
       }
@@ -914,9 +923,7 @@ export default function Home() {
                             whileHover={{ scale: 1.02 }}
                             whileTap={{ scale: 0.98 }}
                             onClick={() => {
-                              setSelectedAgent(ag.id as any);
-                              setPrompt(ag.promptPreset);
-                              if (policy) handleGenerateProposal(policy.policy_id, ag.id);
+                              handleParsePolicy(ag.promptPreset, ag.id as any);
                             }}
                             style={{
                               padding: '10px 12px',
@@ -1114,7 +1121,7 @@ export default function Home() {
                     <motion.button
                       whileHover={{ scale: 1.02 }}
                       whileTap={{ scale: 0.98 }}
-                      onClick={handleParsePolicy}
+                      onClick={() => handleParsePolicy()}
                       disabled={loading || !prompt.trim()}
                       className="btn btn-primary"
                     >
