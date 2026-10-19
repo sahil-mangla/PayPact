@@ -1,73 +1,51 @@
 'use client';
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   PayPalScriptProvider,
   PayPalButtons,
   usePayPalScriptReducer,
 } from '@paypal/react-paypal-js';
 import {
-  Shield,
   ShieldCheck,
   ShieldAlert,
   ShieldX,
   CreditCard,
   ShoppingBag,
-  Sparkles,
   RefreshCw,
   CheckCircle2,
   AlertTriangle,
   FileText,
   Lock,
-  Zap,
-  Fingerprint,
-  TrendingUp,
-  Cpu,
-  Layers,
-  Activity,
-  Copy,
-  ExternalLink,
-  Database,
-  Terminal,
   ArrowRight,
   Eye,
   Bot,
   Download,
   RotateCcw,
-  Check,
   CheckCheck,
   X,
   Play,
   Key,
+  Copy,
+  ExternalLink,
+  ChevronRight,
+  Database,
+  Building2,
 } from 'lucide-react';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api';
 const PAYPAL_CLIENT_ID = process.env.NEXT_PUBLIC_PAYPAL_CLIENT_ID || '';
 
-// -------------------------------------------------------
-// Pipeline Node Definitions for Animated Motion HUD
-// -------------------------------------------------------
-interface PipelineStep {
-  id: string;
-  title: string;
-  subtitle: string;
-  icon: string;
-  state: 'idle' | 'active' | 'success' | 'blocked';
-}
-
 const DEFAULT_SCENARIOS = [
-  { scenario_id: 'SC-A', name: 'Happy Path Purchase', category: 'Nominal', failure_type: 'None' },
-  { scenario_id: 'SC-B', name: 'Price & Shipping Drift', category: 'Drift', failure_type: 'Amount Exceeded' },
-  { scenario_id: 'SC-C', name: 'Revoked Authorization', category: 'Lifecycle', failure_type: 'Auth Revoked' },
-  { scenario_id: 'SC-D', name: 'Product Substitution', category: 'Integrity', failure_type: 'SKU / Fingerprint Mismatch' },
-  { scenario_id: 'SC-E', name: 'Duplicate Submission', category: 'Concurrency', failure_type: 'Idempotency Replay' },
-  { scenario_id: 'SC-F', name: 'Prompt Injection in Item', category: 'Adversarial', failure_type: 'Forbidden Keyword' },
-  { scenario_id: 'SC-G', name: 'Ambiguous Payment Timeout', category: 'Network', failure_type: 'Network Race Timeout' },
+  { scenario_id: 'SC-A', name: 'Standard Approved Purchase', category: 'Standard', failure_type: 'None' },
+  { scenario_id: 'SC-B', name: 'Price & Shipping Fee Increase', category: 'Price Drift', failure_type: 'Total Exceeded' },
+  { scenario_id: 'SC-C', name: 'Revoked Spending Authorization', category: 'Authorization', failure_type: 'Policy Inactive' },
+  { scenario_id: 'SC-D', name: 'Item Substitution at Checkout', category: 'Item Integrity', failure_type: 'SKU Mismatch' },
+  { scenario_id: 'SC-E', name: 'Duplicate Payment Submission', category: 'Concurrency', failure_type: 'Duplicate Request' },
+  { scenario_id: 'SC-F', name: 'Prompt Injection in Description', category: 'Security', failure_type: 'Disallowed Content' },
+  { scenario_id: 'SC-G', name: 'Network Timeout Recovery', category: 'Resilience', failure_type: 'Connection Timeout' },
 ];
 
-// -------------------------------------------------------
-// PayPal Checkout Button (inner)
-// -------------------------------------------------------
 function PayPalCheckoutButton({
   checkoutId,
   onSuccess,
@@ -80,15 +58,15 @@ function PayPalCheckoutButton({
   const [{ isPending }] = usePayPalScriptReducer();
 
   return (
-    <div style={{ marginTop: '12px' }}>
+    <div style={{ marginTop: '14px' }}>
       {isPending && (
-        <div style={{ textAlign: 'center', color: 'var(--text-muted)', fontSize: '0.8rem', padding: '12px' }}>
-          <RefreshCw size={15} className="animate-spin" style={{ display: 'inline', marginRight: '8px' }} />
-          Connecting to PayPal Sandbox v2 API...
+        <div style={{ textAlign: 'center', color: 'var(--text-muted)', fontSize: '0.85rem', padding: '14px' }}>
+          <RefreshCw size={16} className="animate-spin" style={{ display: 'inline', marginRight: '8px' }} />
+          Loading PayPal payment interface...
         </div>
       )}
       <PayPalButtons
-        style={{ layout: 'vertical', color: 'blue', shape: 'rect', label: 'pay', height: 46 }}
+        style={{ layout: 'vertical', color: 'blue', shape: 'rect', label: 'pay', height: 44 }}
         createOrder={async () => {
           const res = await fetch(`${API_BASE}/checkouts/${checkoutId}/execute`, {
             method: 'POST',
@@ -101,9 +79,9 @@ function PayPalCheckoutButton({
 
           const session = data.session;
           if (session?.state === 'POLICY_REJECTED' || session?.state === 'FAILED') {
-            throw new Error(session.failure_reason || 'Blocked by policy engine');
+            throw new Error(session.failure_reason || 'Transaction stopped by policy rules');
           }
-          if (!data.paypal_order_id) throw new Error('No PayPal order ID returned');
+          if (!data.paypal_order_id) throw new Error('No PayPal order ID received');
           return data.paypal_order_id;
         }}
         onApprove={async (sdkData) => {
@@ -113,23 +91,20 @@ function PayPalCheckoutButton({
             body: JSON.stringify({ paypal_order_id: sdkData.orderID }),
           });
           const data = await res.json();
-          if (!res.ok) throw new Error(data.detail || 'Capture failed');
+          if (!res.ok) throw new Error(data.detail || 'Payment capture failed');
           onSuccess(data.session);
         }}
         onError={(err) => {
           onError(String(err));
         }}
         onCancel={() => {
-          onError('Payment cancelled in PayPal popup.');
+          onError('Payment was cancelled in the PayPal window.');
         }}
       />
     </div>
   );
 }
 
-// -------------------------------------------------------
-// Main Dashboard Component
-// -------------------------------------------------------
 export default function Home() {
   const [activeTab, setActiveTab] = useState<'agent' | 'lab' | 'audit'>('agent');
   const [healthStatus, setHealthStatus] = useState<any>(null);
@@ -144,8 +119,9 @@ export default function Home() {
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-  // Pipeline Animation State
-  const [pipelinePhase, setPipelinePhase] = useState<'idle' | 'intent' | 'fingerprint' | 'gate' | 'paypal' | 'settled' | 'blocked'>('idle');
+  // Pipeline Stage: 1: Goal, 2: Verification, 3: Policy, 4: PayPal, 5: Receipt
+  const [pipelineStep, setPipelineStep] = useState<number>(1);
+  const [pipelineBlocked, setPipelineBlocked] = useState<boolean>(false);
 
   // Drift simulation
   const [simulateDrift, setSimulateDrift] = useState<'none' | 'price_drift' | 'sku_substitution'>('none');
@@ -170,7 +146,6 @@ export default function Home() {
   const [auditData, setAuditData] = useState<any>(null);
   const [copiedHash, setCopiedHash] = useState<string | null>(null);
 
-  // Fetch health & scenarios on mount
   useEffect(() => {
     fetchHealth();
     fetchScenarios();
@@ -208,7 +183,7 @@ export default function Home() {
     }
   };
 
-  // Step 1: Parse intent → register policy → generate proposal
+  // Intent parsing → rule registration → item proposal
   const handleParsePolicy = async () => {
     setLoading(true);
     setErrorMsg(null);
@@ -216,7 +191,8 @@ export default function Home() {
     setCheckoutSession(null);
     setPolicy(null);
     setSimulateDrift('none');
-    setPipelinePhase('intent');
+    setPipelineBlocked(false);
+    setPipelineStep(1);
 
     try {
       // 1. Natural language parse
@@ -225,10 +201,10 @@ export default function Home() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ prompt, user_id: 'usr_shopper' }),
       });
-      if (!parseRes.ok) throw new Error('Failed to parse intent.');
+      if (!parseRes.ok) throw new Error('Could not parse purchase goal.');
       const parsedPolicy = await parseRes.json();
 
-      setPipelinePhase('fingerprint');
+      setPipelineStep(2);
 
       // 2. Register policy
       const regRes = await fetch(`${API_BASE}/authorizations`, {
@@ -236,17 +212,17 @@ export default function Home() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(parsedPolicy),
       });
-      if (!regRes.ok) throw new Error('Failed to register policy.');
+      if (!regRes.ok) throw new Error('Could not register policy rules.');
       const savedPolicy = await regRes.json();
       setPolicy(savedPolicy);
 
-      setPipelinePhase('gate');
+      setPipelineStep(3);
 
       // 3. Generate proposal
       await handleGenerateProposal(savedPolicy.policy_id);
     } catch (err: any) {
-      setErrorMsg(err.message || 'Error parsing intent');
-      setPipelinePhase('idle');
+      setErrorMsg(err.message || 'Error processing request');
+      setPipelineStep(1);
     } finally {
       setLoading(false);
     }
@@ -262,18 +238,18 @@ export default function Home() {
       });
       if (!propRes.ok) {
         const err = await propRes.json();
-        throw new Error(err.detail || 'Failed to generate proposal');
+        throw new Error(err.detail || 'Could not generate item proposal');
       }
       const data = await propRes.json();
       setProposalRes(data);
       if (data.state === 'POLICY_REJECTED') {
-        setPipelinePhase('blocked');
+        setPipelineBlocked(true);
       } else {
-        setPipelinePhase('gate');
+        setPipelineStep(3);
       }
     } catch (err: any) {
       setErrorMsg(err.message);
-      setPipelinePhase('blocked');
+      setPipelineBlocked(true);
     }
   };
 
@@ -286,15 +262,14 @@ export default function Home() {
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `APIL_Signed_Receipt_${checkoutId}.json`;
+      a.download = `APIL_Receipt_${checkoutId}.json`;
       a.click();
       URL.revokeObjectURL(url);
     } catch (e: any) {
-      setErrorMsg(e.message || 'Failed to download receipt');
+      setErrorMsg(e.message || 'Could not download receipt');
     }
   };
 
-  // Inspect and verify receipt via HMAC endpoint
   const handleOpenReceiptInspector = async (checkoutId: string) => {
     try {
       setReceiptVerificationState('verifying');
@@ -304,7 +279,6 @@ export default function Home() {
       const receipt = await res.json();
       setInspectingReceipt(receipt);
 
-      // Verify HMAC against backend /api/receipt/verify
       const verifyRes = await fetch(`${API_BASE}/receipt/verify`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -321,16 +295,16 @@ export default function Home() {
 
   const handleSimulateWebhook = async (checkoutId: string, eventType: string) => {
     try {
-      setWebhookStatus(`Dispatching PayPal Webhook: ${eventType}...`);
+      setWebhookStatus(`Sending PayPal webhook: ${eventType}...`);
       const res = await fetch(`${API_BASE}/webhooks/simulate`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ checkout_id: checkoutId, event_type: eventType }),
       });
-      if (!res.ok) throw new Error('Webhook simulation failed');
+      if (!res.ok) throw new Error('Webhook test failed');
       const data = await res.json();
       setCheckoutSession(data.session);
-      setWebhookStatus(`✓ Webhook Verified & Processed: ${eventType} -> State is now ${data.session.state}`);
+      setWebhookStatus(`Webhook confirmed: ${eventType} (Order state: ${data.session.state})`);
       fetchAuditEvents();
     } catch (e: any) {
       setErrorMsg(e.message || 'Webhook failed');
@@ -360,7 +334,7 @@ export default function Home() {
     if (!proposalRes?.checkout_id) return;
     setLoading(true);
     setErrorMsg(null);
-    setPipelinePhase('paypal');
+    setPipelineStep(4);
     try {
       const payload: any = {};
       if (simulateDrift !== 'none') payload.simulate_drift_type = simulateDrift;
@@ -374,14 +348,14 @@ export default function Home() {
       const session = data.session || data;
       setCheckoutSession(session);
       if (!res.ok || session?.state === 'POLICY_REJECTED') {
-        setErrorMsg(session?.failure_reason || data.detail || 'Blocked by policy engine');
-        setPipelinePhase('blocked');
+        setErrorMsg(session?.failure_reason || data.detail || 'Blocked by policy rules');
+        setPipelineBlocked(true);
       } else {
-        setPipelinePhase('settled');
+        setPipelineStep(5);
       }
     } catch (err: any) {
       setErrorMsg(err.message);
-      setPipelinePhase('blocked');
+      setPipelineBlocked(true);
     } finally {
       setLoading(false);
     }
@@ -391,8 +365,8 @@ export default function Home() {
     if (!proposalRes?.checkout_id) return;
     setLoading(true);
     setErrorMsg(null);
-    setPipelinePhase('gate');
-    await new Promise((r) => setTimeout(r, 450));
+    setPipelineStep(3);
+    await new Promise((r) => setTimeout(r, 300));
     try {
       const res = await fetch(`${API_BASE}/checkouts/${proposalRes.checkout_id}/execute`, {
         method: 'POST',
@@ -402,10 +376,10 @@ export default function Home() {
       const data = await res.json();
       const session = data.session || data;
       setCheckoutSession(session);
-      setPipelinePhase('blocked');
+      setPipelineBlocked(true);
     } catch (err: any) {
       setErrorMsg(err.message);
-      setPipelinePhase('blocked');
+      setPipelineBlocked(true);
     } finally {
       setLoading(false);
     }
@@ -416,7 +390,7 @@ export default function Home() {
     try {
       await fetch(`${API_BASE}/authorizations/${policy.policy_id}/revoke`, { method: 'POST' });
       setPolicy((prev: any) => ({ ...prev, is_revoked: true }));
-      setPipelinePhase('blocked');
+      setPipelineBlocked(true);
     } catch (err: any) {
       setErrorMsg(err.message);
     }
@@ -465,262 +439,210 @@ export default function Home() {
         components: 'buttons',
       }}
     >
-      <main style={{ minHeight: '100vh', paddingBottom: '90px' }}>
+      <main style={{ minHeight: '100vh', background: '#f8fafc', color: '#0f172a' }}>
         
-        {/* ── Top Telemetry Ribbon ── */}
-        <div
-          style={{
-            borderBottom: '1px solid rgba(255,255,255,0.06)',
-            background: 'rgba(7, 9, 14, 0.98)',
-            padding: '6px 24px',
-            fontSize: '0.68rem',
-            color: 'var(--text-muted)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            fontFamily: 'JetBrains Mono, monospace',
-          }}
-        >
-          <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-            <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
-              <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#10b981', boxShadow: '0 0 8px #10b981' }} />
-              GATE: <strong style={{ color: '#f8fafc' }}>DETERMINISTIC_ACTIVE</strong>
-            </span>
-            <span>HASH: <strong style={{ color: 'var(--accent-cyan)' }}>CANONICAL_SHA256</strong></span>
-            <span>CRYPTO: <strong style={{ color: '#a78bfa' }}>HMAC_SHA256_SEAL</strong></span>
-            <span>LATENCY: <strong style={{ color: '#34d399' }}>&lt;1.5ms</strong></span>
-          </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-            <span>ENVIRONMENT: <strong style={{ color: isLiveSandbox ? '#34d399' : '#38bdf8' }}>{isLiveSandbox ? 'PAYPAL_SANDBOX_V2' : 'MOCK_TESTNET'}</strong></span>
-            <span>SPEC: <strong style={{ color: '#94a3b8' }}>IEEE/RFC-2104</strong></span>
-          </div>
-        </div>
-
-        {/* ── Navbar ── */}
+        {/* ── Top Header Navigation ── */}
         <header
           style={{
-            borderBottom: '1px solid var(--border-subtle)',
-            background: 'rgba(7, 9, 14, 0.88)',
-            backdropFilter: 'blur(20px)',
+            borderBottom: '1px solid #e2e8f0',
+            background: '#ffffff',
             position: 'sticky',
             top: 0,
-            zIndex: 50,
-            padding: '14px 32px',
+            zIndex: 40,
+            padding: '16px 36px',
+            boxShadow: '0 1px 3px 0 rgba(0, 0, 0, 0.03)',
           }}
         >
-          <div style={{ maxWidth: '1380px', margin: '0 auto', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '16px' }}>
-            {/* Logo */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexShrink: 0 }}>
+          <div style={{ maxWidth: '1360px', margin: '0 auto', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '20px' }}>
+            
+            {/* Logo & Product Brand */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
               <div
                 style={{
-                  width: '42px', height: '42px', borderRadius: '10px',
-                  background: 'linear-gradient(135deg, #0070ba 0%, #06b6d4 100%)',
-                  display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  boxShadow: '0 0 24px rgba(6, 182, 212, 0.45)',
+                  width: '40px',
+                  height: '40px',
+                  borderRadius: '10px',
+                  background: 'linear-gradient(135deg, #0070ba 0%, #003087 100%)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  boxShadow: '0 2px 8px rgba(0, 112, 186, 0.25)',
                 }}
               >
-                <ShieldCheck size={24} color="#ffffff" />
+                <ShieldCheck size={22} color="#ffffff" />
               </div>
               <div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  <h1 style={{ fontSize: '1.25rem', fontWeight: 800, color: '#fff', letterSpacing: '-0.02em' }}>APIL</h1>
-                  <span className="badge badge-neutral" style={{ fontSize: '0.62rem' }}>PayPal AI Agent Hackathon</span>
+                  <h1 style={{ fontSize: '1.25rem', fontWeight: 800, color: '#0f172a', letterSpacing: '-0.02em' }}>APIL</h1>
+                  <span className="badge badge-neutral" style={{ fontSize: '0.7rem' }}>PayPal Integration</span>
                 </div>
-                <p style={{ fontSize: '0.72rem', color: 'var(--text-secondary)' }}>Agent Payment Integrity Layer</p>
+                <p style={{ fontSize: '0.78rem', color: '#64748b' }}>Agent Payment Integrity Layer</p>
               </div>
             </div>
 
-            {/* Tab Switcher */}
-            <div style={{ display: 'flex', gap: '4px', background: 'rgba(255,255,255,0.03)', padding: '4px', borderRadius: '12px', border: '1px solid var(--border-subtle)' }}>
-              <button onClick={() => setActiveTab('agent')} className={`btn ${activeTab === 'agent' ? 'btn-primary' : 'btn-secondary'}`} style={{ padding: '8px 16px', fontSize: '0.8rem' }}>
-                <ShoppingBag size={15} /> Purchase Gate
+            {/* Navigation Tabs */}
+            <div style={{ display: 'flex', gap: '6px', background: '#f1f5f9', padding: '4px', borderRadius: '10px' }}>
+              <button
+                onClick={() => setActiveTab('agent')}
+                className={`btn ${activeTab === 'agent' ? 'btn-primary' : 'btn-secondary'}`}
+                style={{ padding: '8px 18px', fontSize: '0.84rem' }}
+              >
+                <ShoppingBag size={16} /> Purchase Flow
               </button>
               <button
                 onClick={() => { setActiveTab('lab'); if (!benchmarkReport) handleRunBenchmark(); }}
-                className={`btn ${activeTab === 'lab' ? 'btn-cyan' : 'btn-secondary'}`}
-                style={{ padding: '8px 16px', fontSize: '0.8rem' }}
+                className={`btn ${activeTab === 'lab' ? 'btn-primary' : 'btn-secondary'}`}
+                style={{ padding: '8px 18px', fontSize: '0.84rem' }}
               >
-                <Activity size={15} /> Integrity Lab
+                <Play size={16} /> Policy Test Lab
               </button>
               <button
                 onClick={() => { setActiveTab('audit'); fetchAuditEvents(); }}
                 className={`btn ${activeTab === 'audit' ? 'btn-primary' : 'btn-secondary'}`}
-                style={{ padding: '8px 16px', fontSize: '0.8rem' }}
+                style={{ padding: '8px 18px', fontSize: '0.84rem' }}
               >
-                <FileText size={15} /> Audit Ledger
+                <FileText size={16} /> Audit Trail
               </button>
             </div>
 
-            {/* Live status badge */}
-            <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexShrink: 0 }}>
-              {isLiveSandbox && (
-                <div style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '5px 12px', borderRadius: '9999px', background: 'rgba(16, 185, 129, 0.1)', border: '1px solid rgba(16, 185, 129, 0.3)', fontSize: '0.73rem', color: '#34d399' }}>
-                  <span style={{ width: '7px', height: '7px', borderRadius: '50%', background: '#34d399', display: 'inline-block', boxShadow: '0 0 8px #34d399' }} />
+            {/* Environment Status */}
+            <div>
+              {isLiveSandbox ? (
+                <div style={{ display: 'flex', alignItems: 'center', gap: '7px', padding: '6px 14px', borderRadius: '9999px', background: '#ecfdf5', border: '1px solid #a7f3d0', fontSize: '0.78rem', color: '#059669', fontWeight: 600 }}>
+                  <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#10b981' }} />
                   PayPal Live Sandbox
                 </div>
-              )}
-              {isMockMode && (
-                <div style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '5px 12px', borderRadius: '9999px', background: 'rgba(0,112,186,0.1)', border: '1px solid rgba(0,112,186,0.35)', fontSize: '0.73rem', color: '#60a5fa' }}>
-                  <span style={{ width: '7px', height: '7px', borderRadius: '50%', background: '#38bdf8', display: 'inline-block', boxShadow: '0 0 8px #38bdf8' }} />
-                  Mock Mode
+              ) : (
+                <div style={{ display: 'flex', alignItems: 'center', gap: '7px', padding: '6px 14px', borderRadius: '9999px', background: '#eff6ff', border: '1px solid #bfdbfe', fontSize: '0.78rem', color: '#0070ba', fontWeight: 600 }}>
+                  <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#0070ba' }} />
+                  Sandbox Mock Mode
                 </div>
               )}
             </div>
+
           </div>
         </header>
 
-        {/* ── Main Container ── */}
-        <div style={{ maxWidth: '1380px', margin: '24px auto 0', padding: '0 24px' }}>
+        {/* ── Main Content Container ── */}
+        <div style={{ maxWidth: '1360px', margin: '28px auto 60px', padding: '0 24px' }}>
 
           {/* ══════════════════════════════════════════════════════ */}
-          {/* MOTION GRAPHIC HERO: THE INVARIANT DATA-FLOW PIPELINE */}
+          {/* PAYMENT AUTHORIZATION PROGRESS STEPS                   */}
           {/* ══════════════════════════════════════════════════════ */}
-          <div className="glass-panel glass-panel-glow" style={{ padding: '20px 24px', marginBottom: '24px' }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <Zap size={16} color="var(--accent-cyan)" />
-                <span style={{ fontSize: '0.78rem', fontWeight: 700, color: 'var(--text-primary)', letterSpacing: '0.04em' }}>
-                  LIVE INVARIANT ENFORCEMENT PIPELINE
-                </span>
-                <span className="badge badge-cyan" style={{ fontSize: '0.62rem' }}>Zero-Trust Architecture</span>
+          <div className="clean-card" style={{ padding: '20px 24px', marginBottom: '26px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+              <div>
+                <h2 style={{ fontSize: '0.95rem', fontWeight: 700, color: '#0f172a' }}>Payment Authorization Pipeline</h2>
+                <p style={{ fontSize: '0.78rem', color: '#64748b' }}>Every AI agent transaction is verified against strict rules before reaching PayPal</p>
               </div>
-              <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', fontFamily: 'JetBrains Mono, monospace' }}>
-                State: {pipelinePhase.toUpperCase()}
-              </span>
+              {pipelineBlocked ? (
+                <span className="badge badge-reject">Blocked by Rule</span>
+              ) : (
+                <span className="badge badge-allow">System Ready</span>
+              )}
             </div>
 
-            {/* Pipeline Stage Nodes */}
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '12px', position: 'relative' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '12px' }}>
               {[
-                {
-                  id: 'intent',
-                  num: '01',
-                  title: 'Agent Intent',
-                  desc: 'Natural language goal',
-                  active: pipelinePhase === 'intent' || pipelinePhase === 'fingerprint' || pipelinePhase === 'gate' || pipelinePhase === 'paypal' || pipelinePhase === 'settled',
-                },
-                {
-                  id: 'fingerprint',
-                  num: '02',
-                  title: 'SHA-256 Fingerprint',
-                  desc: 'Canonical proposal hash',
-                  active: pipelinePhase === 'fingerprint' || pipelinePhase === 'gate' || pipelinePhase === 'paypal' || pipelinePhase === 'settled',
-                },
-                {
-                  id: 'gate',
-                  num: '03',
-                  title: 'Invariant Gate',
-                  desc: 'Deterministic bounds check',
-                  active: pipelinePhase === 'gate' || pipelinePhase === 'paypal' || pipelinePhase === 'settled',
-                  blocked: pipelinePhase === 'blocked',
-                },
-                {
-                  id: 'paypal',
-                  num: '04',
-                  title: 'PayPal API v2',
-                  desc: 'Secure order capture',
-                  active: pipelinePhase === 'paypal' || pipelinePhase === 'settled',
-                },
-                {
-                  id: 'receipt',
-                  num: '05',
-                  title: 'HMAC Receipt',
-                  desc: 'Cryptographic proof',
-                  active: pipelinePhase === 'settled',
-                },
-              ].map((step, idx) => {
-                const isBlocked = step.blocked;
-                const isActive = step.active && !isBlocked;
+                { step: 1, title: '1. Goal & Rules', desc: 'Define budget and requirements' },
+                { step: 2, title: '2. Proposal Check', desc: 'Verify merchant and pricing' },
+                { step: 3, title: '3. Policy Validation', desc: 'Enforce limits & bounds' },
+                { step: 4, title: '4. PayPal Checkout', desc: 'Authorize and capture funds' },
+                { step: 5, title: '5. Audit Receipt', desc: 'Tamper-proof signed record' },
+              ].map((s) => {
+                const isCurrent = pipelineStep === s.step && !pipelineBlocked;
+                const isDone = pipelineStep > s.step && !pipelineBlocked;
+                const isFailed = pipelineBlocked && pipelineStep === s.step;
+
+                let cardBg = '#f8fafc';
+                let borderColor = '#e2e8f0';
+                let titleColor = '#64748b';
+
+                if (isDone) {
+                  cardBg = '#ecfdf5';
+                  borderColor = '#a7f3d0';
+                  titleColor = '#059669';
+                } else if (isCurrent) {
+                  cardBg = '#eff6ff';
+                  borderColor = '#bfdbfe';
+                  titleColor = '#0070ba';
+                } else if (isFailed) {
+                  cardBg = '#fef2f2';
+                  borderColor = '#fecaca';
+                  titleColor = '#dc2626';
+                }
 
                 return (
                   <div
-                    key={step.id}
+                    key={s.step}
                     style={{
-                      background: isBlocked
-                        ? 'rgba(239, 68, 68, 0.12)'
-                        : isActive
-                        ? 'rgba(6, 182, 212, 0.08)'
-                        : 'rgba(255, 255, 255, 0.02)',
-                      border: isBlocked
-                        ? '1px solid rgba(239, 68, 68, 0.45)'
-                        : isActive
-                        ? '1px solid var(--accent-cyan)'
-                        : '1px solid var(--border-subtle)',
-                      borderRadius: 'var(--radius-md)',
+                      background: cardBg,
+                      border: `1px solid ${borderColor}`,
+                      borderRadius: '8px',
                       padding: '12px 14px',
-                      position: 'relative',
-                      transition: 'all 0.3s ease',
+                      transition: 'all 0.2s ease',
                     }}
                   >
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '6px' }}>
-                      <span style={{ fontSize: '0.66rem', color: isBlocked ? '#f87171' : isActive ? 'var(--accent-cyan)' : 'var(--text-muted)', fontFamily: 'JetBrains Mono, monospace', fontWeight: 700 }}>
-                        {step.num}
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '4px' }}>
+                      <span style={{ fontSize: '0.8rem', fontWeight: 700, color: titleColor }}>
+                        {s.title}
                       </span>
-                      {isBlocked ? (
-                        <ShieldX size={14} color="#f87171" />
-                      ) : isActive ? (
-                        <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#22d3ee', boxShadow: '0 0 8px #22d3ee' }} />
-                      ) : (
-                        <div style={{ width: '6px', height: '6px', borderRadius: '50%', background: 'rgba(255,255,255,0.15)' }} />
-                      )}
+                      {isDone && <CheckCircle2 size={15} color="#059669" />}
+                      {isFailed && <ShieldAlert size={15} color="#dc2626" />}
                     </div>
-                    <div style={{ fontSize: '0.82rem', fontWeight: 700, color: isBlocked ? '#f87171' : isActive ? '#fff' : 'var(--text-secondary)' }}>
-                      {step.title}
-                    </div>
-                    <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', marginTop: '2px' }}>
-                      {step.desc}
-                    </div>
+                    <p style={{ fontSize: '0.72rem', color: '#64748b' }}>{s.desc}</p>
                   </div>
                 );
               })}
             </div>
           </div>
 
-          {/* Error Banner */}
+          {/* Error Message Banner */}
           {errorMsg && (
-            <div className="animate-fade-in" style={{ padding: '14px 20px', borderRadius: 'var(--radius-md)', background: 'var(--status-reject-bg)', border: '1px solid var(--status-reject-border)', color: 'var(--status-reject)', marginBottom: '20px', display: 'flex', alignItems: 'center', gap: '12px', fontSize: '0.875rem' }}>
+            <div style={{ padding: '14px 20px', borderRadius: '8px', background: '#fef2f2', border: '1px solid #fecaca', color: '#dc2626', marginBottom: '22px', display: 'flex', alignItems: 'center', gap: '12px', fontSize: '0.88rem' }}>
               <AlertTriangle size={18} />
-              <span>{errorMsg}</span>
-              <button onClick={() => setErrorMsg(null)} style={{ marginLeft: 'auto', background: 'none', border: 'none', color: 'inherit', cursor: 'pointer', fontSize: '1.1rem' }}>×</button>
+              <span style={{ fontWeight: 500 }}>{errorMsg}</span>
+              <button onClick={() => setErrorMsg(null)} style={{ marginLeft: 'auto', background: 'none', border: 'none', color: '#dc2626', cursor: 'pointer', fontSize: '1.2rem', padding: '0 4px' }}>×</button>
             </div>
           )}
 
           {/* ══════════════════════════════════════════════════════ */}
-          {/* VIEW 1: PURCHASE AGENT & INVARIANT GATE               */}
+          {/* VIEW 1: PURCHASE FLOW                                 */}
           {/* ══════════════════════════════════════════════════════ */}
           {activeTab === 'agent' && (
-            <div className="animate-fade-in" style={{ display: 'grid', gridTemplateColumns: '1.15fr 1fr', gap: '26px' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: '1.15fr 1fr', gap: '26px' }}>
 
-              {/* ─── Left Column ─── */}
+              {/* ─── Left Column: Input, Team Quota, Rules ─── */}
               <div style={{ display: 'flex', flexDirection: 'column', gap: '22px' }}>
 
-                {/* 1. Natural Language Goal Card */}
-                <div className="glass-panel" style={{ padding: '24px' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '14px' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                      <Sparkles size={19} color="var(--accent-cyan)" />
-                      <h2 style={{ fontSize: '1.05rem', fontWeight: 700 }}>AI Purchase Goal</h2>
+                {/* 1. Goal Input Card */}
+                <div className="clean-card" style={{ padding: '24px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <ShoppingBag size={18} color="#0070ba" />
+                      <h3 style={{ fontSize: '1.05rem', fontWeight: 700, color: '#0f172a' }}>AI Purchase Goal</h3>
                     </div>
-                    <span className="badge badge-neutral" style={{ fontSize: '0.64rem' }}>Autonomous Agent Mode</span>
+                    <span className="badge badge-neutral">Autonomous Purchase</span>
                   </div>
 
-                  {/* Multi-Agent Swarm Persona Selector & Quotas */}
-                  <div style={{ marginBottom: '16px', padding: '12px 14px', background: 'rgba(255,255,255,0.02)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-subtle)' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '10px' }}>
-                      <span style={{ fontSize: '0.74rem', color: 'var(--accent-cyan)', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '6px' }}>
-                        <Bot size={14} /> MULTI-AGENT SWARM BUDGET ALLOCATION
+                  {/* Team / Sub-Agent Quota Selector */}
+                  <div style={{ marginBottom: '16px', padding: '12px 14px', background: '#f8fafc', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                      <span style={{ fontSize: '0.78rem', color: '#0f172a', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        <Bot size={15} color="#0070ba" /> Assigned Agent Team:
                       </span>
                       {policy?.agent_quotas?.[selectedAgent] && (
-                        <span style={{ fontSize: '0.72rem', color: 'var(--text-secondary)' }}>
-                          Quota Remaining: <strong style={{ color: 'var(--status-allow)' }}>₹{policy.agent_quotas[selectedAgent].remaining_budget?.toLocaleString()}</strong> / ₹{policy.agent_quotas[selectedAgent].allocated_budget?.toLocaleString()}
+                        <span style={{ fontSize: '0.74rem', color: '#64748b' }}>
+                          Available: <strong style={{ color: '#059669' }}>₹{policy.agent_quotas[selectedAgent].remaining_budget?.toLocaleString()}</strong> / ₹{policy.agent_quotas[selectedAgent].allocated_budget?.toLocaleString()}
                         </span>
                       )}
                     </div>
+
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '8px' }}>
                       {[
-                        { id: 'agent_hardware', label: 'Hardware Agent', role: 'Peripherals & Tech', icon: '🤖', promptPreset: 'Find a wireless mechanical keyboard under ₹5,000, auto-buy under ₹4,000.' },
-                        { id: 'agent_travel', label: 'Travel Agent', role: 'Flights & Stays', icon: '✈️', promptPreset: 'Book economy flights to Bangalore under ₹5,000.' },
-                        { id: 'agent_supplies', label: 'Supplies Agent', role: 'Desk & Peripherals', icon: '📎', promptPreset: 'Order custom brass keyboard desk mat under ₹2,000.' },
+                        { id: 'agent_hardware', label: 'Hardware Agent', role: 'Electronics & Gear', promptPreset: 'Find a wireless mechanical keyboard under ₹5,000, auto-buy under ₹4,000.' },
+                        { id: 'agent_travel', label: 'Travel Agent', role: 'Flights & Hotel', promptPreset: 'Book economy flights to Bangalore under ₹5,000.' },
+                        { id: 'agent_supplies', label: 'Supplies Agent', role: 'Office Supplies', promptPreset: 'Order custom brass keyboard desk mat under ₹2,000.' },
                       ].map((ag) => {
                         const isSelected = selectedAgent === ag.id;
                         return (
@@ -733,11 +655,11 @@ export default function Home() {
                               if (policy) handleGenerateProposal(policy.policy_id, ag.id);
                             }}
                             style={{
-                              padding: '8px 10px',
-                              borderRadius: 'var(--radius-sm)',
-                              border: isSelected ? '1px solid var(--accent-cyan)' : '1px solid var(--border-subtle)',
-                              background: isSelected ? 'rgba(6,182,212,0.12)' : 'rgba(0,0,0,0.25)',
-                              color: isSelected ? '#fff' : 'var(--text-secondary)',
+                              padding: '10px 12px',
+                              borderRadius: '6px',
+                              border: isSelected ? '1px solid #0070ba' : '1px solid #e2e8f0',
+                              background: isSelected ? '#eff6ff' : '#ffffff',
+                              color: isSelected ? '#0070ba' : '#334155',
                               cursor: 'pointer',
                               textAlign: 'left',
                               display: 'flex',
@@ -746,84 +668,110 @@ export default function Home() {
                               transition: 'all 0.15s ease',
                             }}
                           >
-                            <span style={{ fontSize: '0.78rem', fontWeight: isSelected ? 700 : 500 }}>
-                              {ag.icon} {ag.label}
-                            </span>
-                            <span style={{ fontSize: '0.64rem', color: 'var(--text-muted)' }}>{ag.role}</span>
+                            <span style={{ fontSize: '0.82rem', fontWeight: 600 }}>{ag.label}</span>
+                            <span style={{ fontSize: '0.7rem', color: '#64748b' }}>{ag.role}</span>
                           </button>
                         );
                       })}
                     </div>
                   </div>
 
+                  <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 600, color: '#334155', marginBottom: '6px' }}>
+                    Purchase Instructions:
+                  </label>
                   <textarea
                     value={prompt}
                     onChange={(e) => setPrompt(e.target.value)}
                     rows={3}
-                    style={{ width: '100%', background: 'rgba(0,0,0,0.4)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-md)', padding: '12px 16px', color: '#fff', fontSize: '0.875rem', resize: 'none', outline: 'none', lineHeight: '1.55' }}
-                    placeholder="Describe purchase goal with spending rules..."
+                    style={{
+                      width: '100%',
+                      background: '#ffffff',
+                      border: '1px solid #cbd5e1',
+                      borderRadius: '8px',
+                      padding: '12px 14px',
+                      color: '#0f172a',
+                      fontSize: '0.88rem',
+                      resize: 'none',
+                      outline: 'none',
+                      lineHeight: '1.5',
+                      boxShadow: 'inset 0 1px 2px rgba(0, 0, 0, 0.04)',
+                    }}
+                    placeholder="Enter what you want the agent to purchase and your budget limits..."
                   />
 
-                  {/* Presets */}
-                  <div style={{ marginTop: '10px', display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
-                    <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', alignSelf: 'center' }}>Presets:</span>
+                  {/* Sample Presets */}
+                  <div style={{ marginTop: '10px', display: 'flex', flexWrap: 'wrap', gap: '6px', alignItems: 'center' }}>
+                    <span style={{ fontSize: '0.75rem', color: '#64748b' }}>Examples:</span>
                     {[
-                      ['Auto-buy ₹3,899 (Under Limit)', 'Find a wireless mechanical keyboard suitable for programming. Maximum budget ₹5,000, auto-buy under ₹4,000.'],
-                      ['Requires Approval ₹4,500', 'Find premium custom mechanical keyboard under ₹5,000. Require approval above ₹4,000.'],
-                      ['Budget Ceiling Reject', 'Search for custom brass keyboard. Budget ceiling ₹5,000.'],
+                      ['Auto-buy ₹3,899 (Approved)', 'Find a wireless mechanical keyboard suitable for programming. Maximum budget ₹5,000, auto-buy under ₹4,000.'],
+                      ['Requires Manual Approval ₹4,500', 'Find premium custom mechanical keyboard under ₹5,000. Require approval above ₹4,000.'],
+                      ['Reject Over Budget', 'Search for custom brass keyboard. Budget ceiling ₹5,000.'],
                     ].map(([label, val]) => (
-                      <button key={label} onClick={() => setPrompt(val)} className="badge badge-neutral" style={{ cursor: 'pointer', background: 'rgba(255,255,255,0.03)', padding: '4px 8px' }}>
+                      <button
+                        key={label}
+                        onClick={() => setPrompt(val)}
+                        style={{
+                          background: '#f1f5f9',
+                          border: '1px solid #e2e8f0',
+                          borderRadius: '6px',
+                          padding: '4px 9px',
+                          fontSize: '0.74rem',
+                          color: '#475569',
+                          cursor: 'pointer',
+                        }}
+                      >
                         {label}
                       </button>
                     ))}
                   </div>
 
-                  <div style={{ marginTop: '16px', display: 'flex', justifyContent: 'flex-end' }}>
-                    <button onClick={handleParsePolicy} disabled={loading || !prompt.trim()} className="btn btn-cyan">
-                      {loading ? <RefreshCw className="animate-spin" size={16} /> : <Zap size={16} />}
-                      Extract Constraints & Propose
+                  <div style={{ marginTop: '18px', display: 'flex', justifyContent: 'flex-end' }}>
+                    <button
+                      onClick={handleParsePolicy}
+                      disabled={loading || !prompt.trim()}
+                      className="btn btn-primary"
+                    >
+                      {loading ? <RefreshCw className="animate-spin" size={16} /> : <Play size={16} />}
+                      Generate Proposal & Check Rules
                     </button>
                   </div>
                 </div>
 
-                {/* 2. Swarm Quota Progress Tree */}
+                {/* 2. Budget Quotas Card */}
                 {policy && (
-                  <div className="glass-panel animate-fade-in" style={{ padding: '20px 22px' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '14px' }}>
-                      <span style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: '7px' }}>
-                        <Layers size={15} color="var(--accent-cyan)" /> SWARM QUOTA TREE
-                      </span>
-                      <span className="badge badge-neutral" style={{ fontSize: '0.64rem' }}>Autonomous Budget Bounds</span>
+                  <div className="clean-card" style={{ padding: '20px 24px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+                      <h4 style={{ fontSize: '0.88rem', fontWeight: 700, color: '#0f172a' }}>Department & Agent Budgets</h4>
+                      <span className="badge badge-neutral" style={{ fontSize: '0.68rem' }}>Enforced Automatically</span>
                     </div>
 
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
                       {/* Master Budget */}
                       <div>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.78rem', marginBottom: '4px' }}>
-                          <span style={{ color: 'var(--text-secondary)' }}>Master Ceiling</span>
-                          <strong style={{ color: '#fff' }}>₹{policy.maximum_total?.toLocaleString()}</strong>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.8rem', marginBottom: '4px' }}>
+                          <span style={{ color: '#475569' }}>Total Allowed Spend:</span>
+                          <strong style={{ color: '#0f172a' }}>₹{policy.maximum_total?.toLocaleString()}</strong>
                         </div>
-                        <div style={{ height: '6px', background: 'rgba(255,255,255,0.08)', borderRadius: '3px', overflow: 'hidden' }}>
-                          <div style={{ width: '100%', height: '100%', background: 'linear-gradient(90deg, #06b6d4, #10b981)' }} />
+                        <div style={{ height: '7px', background: '#e2e8f0', borderRadius: '4px', overflow: 'hidden' }}>
+                          <div style={{ width: '100%', height: '100%', background: '#0070ba' }} />
                         </div>
                       </div>
 
-                      {/* Active Agent Quota */}
+                      {/* Agent Budget */}
                       {policy.agent_quotas?.[selectedAgent] && (
                         <div>
-                          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.78rem', marginBottom: '4px' }}>
-                            <span style={{ color: 'var(--text-secondary)' }}>{selectedAgent} (Active)</span>
-                            <span style={{ color: 'var(--status-allow)' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.8rem', marginBottom: '4px' }}>
+                            <span style={{ color: '#475569' }}>{selectedAgent} Quota:</span>
+                            <span style={{ color: '#059669', fontWeight: 600 }}>
                               ₹{policy.agent_quotas[selectedAgent].remaining_budget?.toLocaleString()} remaining of ₹{policy.agent_quotas[selectedAgent].allocated_budget?.toLocaleString()}
                             </span>
                           </div>
-                          <div style={{ height: '6px', background: 'rgba(255,255,255,0.08)', borderRadius: '3px', overflow: 'hidden' }}>
+                          <div style={{ height: '7px', background: '#e2e8f0', borderRadius: '4px', overflow: 'hidden' }}>
                             <div
                               style={{
                                 width: `${Math.min(100, (policy.agent_quotas[selectedAgent].remaining_budget / policy.agent_quotas[selectedAgent].allocated_budget) * 100)}%`,
                                 height: '100%',
                                 background: '#10b981',
-                                transition: 'width 0.4s ease',
                               }}
                             />
                           </div>
@@ -833,203 +781,215 @@ export default function Home() {
                   </div>
                 )}
 
-                {/* 3. Authorization Policy Card */}
+                {/* 3. Active Policy Rules Card */}
                 {policy && (
-                  <div className="glass-panel animate-fade-in" style={{ padding: '22px', borderLeft: `4px solid ${policy.is_revoked ? 'var(--status-reject)' : 'var(--accent-cyan)'}` }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+                  <div className="clean-card" style={{ padding: '20px 24px', borderLeft: `4px solid ${policy.is_revoked ? '#dc2626' : '#0070ba'}` }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                        <Lock size={17} color={policy.is_revoked ? 'var(--status-reject)' : 'var(--accent-cyan)'} />
-                        <h3 style={{ fontSize: '0.95rem', fontWeight: 700 }}>Confirmed Authorization Policy</h3>
-                        <span className="badge badge-neutral">v{policy.version}</span>
+                        <Lock size={16} color={policy.is_revoked ? '#dc2626' : '#0070ba'} />
+                        <h4 style={{ fontSize: '0.92rem', fontWeight: 700, color: '#0f172a' }}>Active Policy Rules</h4>
+                        <span className="badge badge-neutral" style={{ fontSize: '0.66rem' }}>Policy ID: {policy.policy_id.slice(0, 10)}</span>
                       </div>
                       {policy.is_revoked ? (
                         <span className="badge badge-reject">Revoked</span>
                       ) : (
-                        <button onClick={handleRevokePolicy} className="btn btn-danger" style={{ padding: '4px 10px', fontSize: '0.72rem' }}>Revoke Policy</button>
+                        <button onClick={handleRevokePolicy} className="btn btn-danger" style={{ padding: '4px 10px', fontSize: '0.74rem' }}>
+                          Revoke Permission
+                        </button>
                       )}
                     </div>
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', fontSize: '0.83rem' }}>
-                      <div style={{ background: 'rgba(255,255,255,0.02)', padding: '12px', borderRadius: 'var(--radius-sm)' }}>
-                        <span style={{ color: 'var(--text-muted)', display: 'block', marginBottom: '3px', fontSize: '0.72rem' }}>Budget Ceiling (Hard Invariant)</span>
-                        <strong style={{ fontSize: '1.05rem', color: '#fff' }}>₹{policy.maximum_total?.toLocaleString()}</strong>
+
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                      <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', padding: '12px', borderRadius: '6px' }}>
+                        <span style={{ color: '#64748b', fontSize: '0.74rem', display: 'block', marginBottom: '2px' }}>Hard Budget Ceiling</span>
+                        <strong style={{ fontSize: '1.05rem', color: '#0f172a' }}>₹{policy.maximum_total?.toLocaleString()}</strong>
                       </div>
-                      <div style={{ background: 'rgba(255,255,255,0.02)', padding: '12px', borderRadius: 'var(--radius-sm)' }}>
-                        <span style={{ color: 'var(--text-muted)', display: 'block', marginBottom: '3px', fontSize: '0.72rem' }}>Auto-purchase Limit</span>
-                        <strong style={{ fontSize: '1.05rem', color: 'var(--accent-cyan)' }}>₹{policy.automatic_purchase_limit?.toLocaleString()}</strong>
+                      <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', padding: '12px', borderRadius: '6px' }}>
+                        <span style={{ color: '#64748b', fontSize: '0.74rem', display: 'block', marginBottom: '2px' }}>Auto-Purchase Threshold</span>
+                        <strong style={{ fontSize: '1.05rem', color: '#0070ba' }}>₹{policy.automatic_purchase_limit?.toLocaleString()}</strong>
                       </div>
                     </div>
-                    <div style={{ marginTop: '10px', fontSize: '0.73rem', color: 'var(--text-muted)', display: 'flex', gap: '16px' }}>
-                      <span>Category: <strong style={{ color: 'var(--text-primary)' }}>{policy.product_category || 'Any'}</strong></span>
-                      <span>Currency: <strong style={{ color: 'var(--text-primary)' }}>{policy.allowed_currencies?.join(', ') || 'Any'}</strong></span>
+
+                    <div style={{ marginTop: '12px', fontSize: '0.78rem', color: '#64748b', display: 'flex', gap: '16px' }}>
+                      <span>Category: <strong style={{ color: '#0f172a' }}>{policy.product_category || 'General'}</strong></span>
+                      <span>Currency: <strong style={{ color: '#0f172a' }}>{policy.allowed_currencies?.join(', ') || 'INR'}</strong></span>
                     </div>
                   </div>
                 )}
 
-                {/* 4. Interactive Drift Injection Controls */}
+                {/* 4. Test Policy Violations (Drift Testing) */}
                 {proposalRes && (
-                  <div
-                    className="glass-panel animate-fade-in"
-                    style={{
-                      padding: '20px',
-                      borderLeft: `4px solid ${simulateDrift !== 'none' ? 'var(--status-reject)' : 'var(--border-subtle)'}`,
-                      transition: 'border-color 0.3s',
-                    }}
-                  >
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                        <TrendingUp size={17} color={simulateDrift !== 'none' ? 'var(--status-reject)' : 'var(--status-approval)'} />
-                        <h4 style={{ fontSize: '0.88rem', fontWeight: 700 }}>Interactive Drift Injection</h4>
-                      </div>
-                      {simulateDrift !== 'none' && (
-                        <span className="badge badge-reject" style={{ fontSize: '0.65rem' }}>
-                          ⚠ DRIFT ACTIVE
-                        </span>
-                      )}
+                  <div className="clean-card" style={{ padding: '20px 24px', borderLeft: `4px solid ${simulateDrift !== 'none' ? '#dc2626' : '#e2e8f0'}` }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+                      <h4 style={{ fontSize: '0.88rem', fontWeight: 700, color: '#0f172a' }}>Test Policy Violations</h4>
+                      {simulateDrift !== 'none' && <span className="badge badge-reject">Violation Active</span>}
                     </div>
+                    <p style={{ fontSize: '0.76rem', color: '#64748b', marginBottom: '12px' }}>
+                      Simulate a seller altering pricing or swapping products after agent authorization:
+                    </p>
 
                     {simulateDrift === 'price_drift' && (
-                      <div className="animate-fade-in" style={{ marginBottom: '14px', padding: '10px 14px', background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.25)', borderRadius: 'var(--radius-sm)', fontSize: '0.82rem' }}>
-                        <span style={{ color: 'var(--text-muted)' }}>Original: </span>
-                        <strong style={{ color: '#fff', textDecoration: 'line-through', marginRight: '12px' }}>₹{originalTotal.toLocaleString()}</strong>
-                        <ArrowRight size={12} style={{ display: 'inline', color: 'var(--status-reject)', marginRight: '8px' }} />
-                        <strong style={{ color: 'var(--status-reject)', fontSize: '1rem' }}>₹{driftedTotal.toLocaleString()}</strong>
-                        <span style={{ color: 'var(--status-reject)', fontSize: '0.72rem', marginLeft: '6px' }}>(+₹850 shipping injected at checkout)</span>
+                      <div style={{ marginBottom: '12px', padding: '10px 14px', background: '#fef2f2', border: '1px solid #fecaca', borderRadius: '6px', fontSize: '0.82rem' }}>
+                        <span style={{ color: '#64748b' }}>Original Total: </span>
+                        <strong style={{ textDecoration: 'line-through', color: '#64748b', marginRight: '8px' }}>₹{originalTotal.toLocaleString()}</strong>
+                        <ArrowRight size={13} style={{ display: 'inline', color: '#dc2626', marginRight: '6px' }} />
+                        <strong style={{ color: '#dc2626', fontSize: '0.95rem' }}>₹{driftedTotal.toLocaleString()}</strong>
+                        <span style={{ color: '#dc2626', fontSize: '0.75rem', marginLeft: '6px' }}>(+₹850 unexpected shipping added)</span>
                       </div>
                     )}
+
                     {simulateDrift === 'sku_substitution' && (
-                      <div className="animate-fade-in" style={{ marginBottom: '14px', padding: '10px 14px', background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.25)', borderRadius: 'var(--radius-sm)', fontSize: '0.82rem' }}>
-                        <span style={{ color: 'var(--text-muted)' }}>SKU: </span>
-                        <code style={{ color: '#fff', textDecoration: 'line-through', marginRight: '8px' }}>{proposalRes.proposal?.items?.[0]?.sku}</code>
-                        <ArrowRight size={12} style={{ display: 'inline', color: 'var(--status-reject)', marginRight: '4px' }} />
-                        <code style={{ color: 'var(--status-reject)' }}>KB-SUBSTITUTED-CHEAP</code>
-                        <span style={{ color: 'var(--text-muted)', display: 'block', marginTop: '4px', fontSize: '0.72rem' }}>Fingerprint mismatch will trigger pre-execution block</span>
+                      <div style={{ marginBottom: '12px', padding: '10px 14px', background: '#fef2f2', border: '1px solid #fecaca', borderRadius: '6px', fontSize: '0.82rem' }}>
+                        <span style={{ color: '#64748b' }}>Item Changed: </span>
+                        <code style={{ textDecoration: 'line-through', color: '#64748b', marginRight: '6px' }}>{proposalRes.proposal?.items?.[0]?.sku}</code>
+                        <ArrowRight size={13} style={{ display: 'inline', color: '#dc2626', marginRight: '6px' }} />
+                        <code style={{ color: '#dc2626' }}>KB-SUBSTITUTED-CHEAP</code>
                       </div>
                     )}
 
                     <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-                      <button onClick={() => setSimulateDrift('none')} className={`btn ${simulateDrift === 'none' ? 'btn-primary' : 'btn-secondary'}`} style={{ padding: '6px 12px', fontSize: '0.75rem' }}>
-                        ✓ Nominal (No Drift)
+                      <button
+                        onClick={() => setSimulateDrift('none')}
+                        className={`btn ${simulateDrift === 'none' ? 'btn-primary' : 'btn-secondary'}`}
+                        style={{ padding: '6px 12px', fontSize: '0.76rem' }}
+                      >
+                        Standard Purchase (No Changes)
                       </button>
-                      <button onClick={() => { setSimulateDrift('price_drift'); setCheckoutSession(null); setErrorMsg(null); }} className={`btn ${simulateDrift === 'price_drift' ? 'btn-danger' : 'btn-secondary'}`} style={{ padding: '6px 12px', fontSize: '0.75rem' }}>
-                        💸 Inject +₹850 Shipping Drift
+                      <button
+                        onClick={() => { setSimulateDrift('price_drift'); setCheckoutSession(null); setErrorMsg(null); }}
+                        className={`btn ${simulateDrift === 'price_drift' ? 'btn-danger' : 'btn-secondary'}`}
+                        style={{ padding: '6px 12px', fontSize: '0.76rem' }}
+                      >
+                        Add +₹850 Shipping Fee
                       </button>
-                      <button onClick={() => { setSimulateDrift('sku_substitution'); setCheckoutSession(null); setErrorMsg(null); }} className={`btn ${simulateDrift === 'sku_substitution' ? 'btn-danger' : 'btn-secondary'}`} style={{ padding: '6px 12px', fontSize: '0.75rem' }}>
-                        🔄 Inject SKU Substitution
+                      <button
+                        onClick={() => { setSimulateDrift('sku_substitution'); setCheckoutSession(null); setErrorMsg(null); }}
+                        className={`btn ${simulateDrift === 'sku_substitution' ? 'btn-danger' : 'btn-secondary'}`}
+                        style={{ padding: '6px 12px', fontSize: '0.76rem' }}
+                      >
+                        Swap for Different Item
                       </button>
                     </div>
                   </div>
                 )}
               </div>
 
-              {/* ─── Right Column ─── */}
+              {/* ─── Right Column: Proposal & Checkout ─── */}
               <div style={{ display: 'flex', flexDirection: 'column', gap: '22px' }}>
                 {!proposalRes ? (
-                  <div className="glass-panel" style={{ padding: '60px 24px', textAlign: 'center', color: 'var(--text-muted)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
-                    <Cpu size={48} strokeWidth={1.2} style={{ marginBottom: '16px', opacity: 0.35 }} />
-                    <h3 style={{ fontSize: '1.05rem', color: 'var(--text-secondary)', marginBottom: '8px' }}>Awaiting Proposal</h3>
-                    <p style={{ fontSize: '0.83rem', maxWidth: '300px' }}>Enter a purchase goal. The AI agent will propose an item and the policy gate will evaluate it deterministically.</p>
+                  <div className="clean-card" style={{ padding: '70px 24px', textAlign: 'center', color: '#64748b' }}>
+                    <CreditCard size={44} strokeWidth={1.3} style={{ margin: '0 auto 16px', color: '#cbd5e1' }} />
+                    <h3 style={{ fontSize: '1.05rem', color: '#0f172a', marginBottom: '6px' }}>No Proposal Generated Yet</h3>
+                    <p style={{ fontSize: '0.84rem', maxWidth: '340px', margin: '0 auto' }}>
+                      Enter your purchase goal on the left. The agent will find a matching item, compute total costs, and check your policy rules.
+                    </p>
                   </div>
                 ) : (
-                  <div className="glass-panel animate-fade-in" style={{ padding: '24px' }}>
+                  <div className="clean-card" style={{ padding: '24px' }}>
 
-                    {/* Proposal Header */}
+                    {/* Proposal Title & Status */}
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '14px' }}>
                       <div>
-                        <span style={{ fontSize: '0.72rem', color: 'var(--accent-cyan)', fontWeight: 600, letterSpacing: '0.06em' }}>CANDIDATE PROPOSAL</span>
-                        <h3 style={{ fontSize: '1.1rem', fontWeight: 700, color: '#fff', marginTop: '2px' }}>{proposalRes.proposal?.items?.[0]?.name}</h3>
-                        <p style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', marginTop: '2px' }}>
-                          Merchant: <strong>{proposalRes.proposal?.merchant}</strong> · SKU: <code style={{ color: 'var(--accent-cyan)' }}>{proposalRes.proposal?.items?.[0]?.sku}</code>
+                        <span style={{ fontSize: '0.72rem', color: '#0070ba', fontWeight: 600 }}>RECOMMENDED PURCHASE</span>
+                        <h3 style={{ fontSize: '1.15rem', fontWeight: 700, color: '#0f172a', marginTop: '2px' }}>
+                          {proposalRes.proposal?.items?.[0]?.name}
+                        </h3>
+                        <p style={{ fontSize: '0.8rem', color: '#64748b', marginTop: '2px' }}>
+                          Merchant: <strong>{proposalRes.proposal?.merchant}</strong> · SKU: <code style={{ color: '#0070ba' }}>{proposalRes.proposal?.items?.[0]?.sku}</code>
                         </p>
                       </div>
                       <div>
-                        {proposalRes.state === 'AUTHORIZED' && <span className="badge badge-allow"><CheckCircle2 size={13} /> AUTO-BUY</span>}
-                        {proposalRes.state === 'AWAITING_APPROVAL' && <span className="badge badge-approval"><AlertTriangle size={13} /> NEEDS APPROVAL</span>}
-                        {proposalRes.state === 'POLICY_REJECTED' && <span className="badge badge-reject"><ShieldX size={13} /> REJECTED</span>}
-                        {(checkoutSession?.state === 'POLICY_REJECTED') && proposalRes.state !== 'POLICY_REJECTED' && <span className="badge badge-reject"><ShieldX size={13} /> DRIFT BLOCKED</span>}
+                        {proposalRes.state === 'AUTHORIZED' && <span className="badge badge-allow"><CheckCircle2 size={13} /> Auto-Approved</span>}
+                        {proposalRes.state === 'AWAITING_APPROVAL' && <span className="badge badge-approval"><AlertTriangle size={13} /> Needs Approval</span>}
+                        {proposalRes.state === 'POLICY_REJECTED' && <span className="badge badge-reject"><ShieldX size={13} /> Blocked</span>}
+                        {(checkoutSession?.state === 'POLICY_REJECTED') && proposalRes.state !== 'POLICY_REJECTED' && <span className="badge badge-reject"><ShieldX size={13} /> Blocked</span>}
                       </div>
                     </div>
 
-                    {/* Recommendation */}
-                    <div style={{ background: 'rgba(0,0,0,0.25)', padding: '11px 14px', borderRadius: 'var(--radius-sm)', fontSize: '0.8rem', color: 'var(--text-secondary)', lineHeight: '1.5', marginBottom: '16px', borderLeft: '3px solid var(--accent-paypal)' }}>
+                    {/* Item Explanation */}
+                    <div style={{ background: '#f8fafc', borderLeft: '3px solid #0070ba', padding: '12px 14px', borderRadius: '4px', fontSize: '0.82rem', color: '#334155', lineHeight: '1.5', marginBottom: '16px' }}>
                       {proposalRes.recommendation_explanation}
                     </div>
 
-                    {/* Pricing Breakdown */}
-                    <div style={{ background: 'rgba(255,255,255,0.02)', padding: '14px', borderRadius: 'var(--radius-sm)', marginBottom: '16px' }}>
+                    {/* Price Breakdown */}
+                    <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', padding: '14px', borderRadius: '8px', marginBottom: '16px' }}>
                       {[
-                        ['Line-item Subtotal', `₹${proposalRes.proposal?.item_subtotal?.toLocaleString()}`],
-                        ['Shipping Fee', simulateDrift === 'price_drift' ? '₹850 ⚠ DRIFTED' : `₹${proposalRes.proposal?.shipping_fee?.toLocaleString()}`],
+                        ['Item Price', `₹${proposalRes.proposal?.item_subtotal?.toLocaleString()}`],
+                        ['Shipping Fee', simulateDrift === 'price_drift' ? '₹850 (Altered)' : `₹${proposalRes.proposal?.shipping_fee?.toLocaleString()}`],
                         ['Tax', `₹${proposalRes.proposal?.tax_fee?.toLocaleString()}`],
                       ].map(([label, val]) => (
-                        <div key={label} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.83rem', marginBottom: '7px' }}>
-                          <span style={{ color: 'var(--text-secondary)' }}>{label}</span>
-                          <strong style={{ color: (label === 'Shipping Fee' && simulateDrift === 'price_drift') ? 'var(--status-reject)' : '#fff' }}>{val}</strong>
+                        <div key={label} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.84rem', marginBottom: '8px' }}>
+                          <span style={{ color: '#64748b' }}>{label}</span>
+                          <strong style={{ color: (label === 'Shipping Fee' && simulateDrift === 'price_drift') ? '#dc2626' : '#0f172a' }}>{val}</strong>
                         </div>
                       ))}
-                      <div style={{ height: '1px', background: 'var(--border-subtle)', margin: '10px 0' }} />
+                      <div style={{ height: '1px', background: '#e2e8f0', margin: '10px 0' }} />
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <span style={{ fontWeight: 600, color: 'var(--text-primary)' }}>Final Total</span>
+                        <span style={{ fontWeight: 700, color: '#0f172a', fontSize: '0.92rem' }}>Total Cost</span>
                         <div style={{ textAlign: 'right' }}>
                           {simulateDrift === 'price_drift' && (
-                            <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', textDecoration: 'line-through', display: 'block' }}>₹{originalTotal.toLocaleString()}</span>
+                            <span style={{ fontSize: '0.78rem', color: '#94a3b8', textDecoration: 'line-through', display: 'block' }}>₹{originalTotal.toLocaleString()}</span>
                           )}
-                          <strong style={{ fontSize: '1.2rem', color: simulateDrift === 'price_drift' ? 'var(--status-reject)' : 'var(--accent-cyan)' }}>
+                          <strong style={{ fontSize: '1.25rem', color: simulateDrift === 'price_drift' ? '#dc2626' : '#0070ba' }}>
                             ₹{driftedTotal.toLocaleString()} {proposalRes.proposal?.currency}
                           </strong>
                         </div>
                       </div>
                     </div>
 
-                    {/* Canonical SHA-256 Fingerprint */}
-                    <div style={{ background: 'rgba(6,182,212,0.05)', border: '1px solid var(--accent-cyan-glow)', borderRadius: 'var(--radius-sm)', padding: '10px 12px', marginBottom: '18px' }}>
+                    {/* Verification Record (Hash) */}
+                    <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '6px', padding: '10px 12px', marginBottom: '18px' }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
-                        <span style={{ fontSize: '0.72rem', color: 'var(--accent-cyan)', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '5px' }}>
-                          <Fingerprint size={13} /> CANONICAL SHA-256 FINGERPRINT
+                        <span style={{ fontSize: '0.72rem', color: '#64748b', fontWeight: 600 }}>
+                          PROPOSAL VERIFICATION HASH
                         </span>
-                        <button onClick={() => copyToClipboard(proposalRes.proposal?.proposal_fingerprint)} style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: '0.68rem' }}>
-                          {copiedHash ? '✓ Copied' : <><Copy size={11} /> Copy</>}
+                        <button
+                          onClick={() => copyToClipboard(proposalRes.proposal?.proposal_fingerprint)}
+                          style={{ background: 'none', border: 'none', color: '#0070ba', cursor: 'pointer', fontSize: '0.7rem' }}
+                        >
+                          {copiedHash ? '✓ Copied' : 'Copy'}
                         </button>
                       </div>
-                      <code style={{ fontSize: '0.7rem', color: '#64748b', wordBreak: 'break-all', display: 'block', lineHeight: '1.4' }}>
+                      <code style={{ fontSize: '0.72rem', color: '#475569', wordBreak: 'break-all', display: 'block' }}>
                         {proposalRes.proposal?.proposal_fingerprint}
                       </code>
                     </div>
 
-                    {/* Actions */}
+                    {/* Payment Execution Actions */}
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
                       {proposalRes.state === 'AWAITING_APPROVAL' && !checkoutSession && (
-                        <button onClick={handleApprove} disabled={loading} className="btn btn-cyan" style={{ width: '100%' }}>
-                          <ShieldCheck size={17} /> Explicitly Approve Exact Proposal Fingerprint
+                        <button onClick={handleApprove} disabled={loading} className="btn btn-primary" style={{ width: '100%', padding: '12px' }}>
+                          <CheckCircle2 size={16} /> Manually Approve This Purchase
                         </button>
                       )}
 
                       {(proposalRes.state === 'AUTHORIZED' || (checkoutSession?.state === 'AUTHORIZED')) && !checkoutSession?.state?.match(/PAID|POLICY_REJECTED|FAILED/) && (
                         <>
                           {simulateDrift !== 'none' ? (
-                            <button onClick={handleInjectDriftAndBlock} disabled={loading} className="btn btn-danger" style={{ width: '100%', padding: '13px' }}>
-                              {loading ? <RefreshCw className="animate-spin" size={17} /> : <ShieldAlert size={17} />}
-                              Test Pre-Execution Gate (Drift Active)
+                            <button onClick={handleInjectDriftAndBlock} disabled={loading} className="btn btn-danger" style={{ width: '100%', padding: '12px' }}>
+                              {loading ? <RefreshCw className="animate-spin" size={16} /> : <ShieldAlert size={16} />}
+                              Execute Payment (Test Violation Defense)
                             </button>
                           ) : isMockMode ? (
-                            <button onClick={handleExecutePaymentMock} disabled={loading} className="btn btn-primary" style={{ width: '100%', padding: '13px', fontSize: '0.93rem' }}>
-                              {loading ? <RefreshCw className="animate-spin" size={17} /> : <CreditCard size={17} />}
-                              Execute Mock PayPal Payment
+                            <button onClick={handleExecutePaymentMock} disabled={loading} className="btn btn-primary" style={{ width: '100%', padding: '12px' }}>
+                              {loading ? <RefreshCw className="animate-spin" size={16} /> : <CreditCard size={16} />}
+                              Execute Authorized Payment
                             </button>
                           ) : (
                             <div>
-                              <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: '6px', textAlign: 'center' }}>
-                                APIL policy gate passes → PayPal secure checkout:
+                              <p style={{ fontSize: '0.78rem', color: '#64748b', marginBottom: '8px', textAlign: 'center' }}>
+                                Rules passed. Complete checkout securely with PayPal:
                               </p>
                               <PayPalCheckoutButton
                                 checkoutId={proposalRes.checkout_id}
                                 onSuccess={(session) => {
                                   setCheckoutSession(session);
-                                  setPipelinePhase('settled');
+                                  setPipelineStep(5);
                                 }}
                                 onError={(msg) => {
                                   setErrorMsg(msg);
                                   setCheckoutSession({ state: 'POLICY_REJECTED', failure_reason: msg });
-                                  setPipelinePhase('blocked');
+                                  setPipelineBlocked(true);
                                 }}
                               />
                             </div>
@@ -1038,77 +998,77 @@ export default function Home() {
                       )}
 
                       {proposalRes.state === 'POLICY_REJECTED' && !checkoutSession && (
-                        <div style={{ textAlign: 'center', padding: '10px', color: 'var(--status-reject)', fontSize: '0.83rem', background: 'var(--status-reject-bg)', borderRadius: 'var(--radius-sm)' }}>
+                        <div style={{ textAlign: 'center', padding: '12px', color: '#dc2626', fontSize: '0.85rem', background: '#fef2f2', border: '1px solid #fecaca', borderRadius: '6px' }}>
                           <ShieldX size={16} style={{ display: 'inline', marginRight: '6px' }} />
-                          {proposalRes.failure_reason || 'Proposal rejected by Deterministic Policy Engine.'}
+                          {proposalRes.failure_reason || 'This purchase violates active policy rules and cannot proceed.'}
                         </div>
                       )}
                     </div>
 
-                    {/* Payment Verified Receipt */}
+                    {/* Payment Success Card */}
                     {checkoutSession?.state === 'PAID' && (
-                      <div className="animate-fade-in" style={{ marginTop: '18px', padding: '16px', borderRadius: 'var(--radius-md)', background: 'var(--status-allow-bg)', border: '1px solid var(--status-allow-border)' }}>
+                      <div style={{ marginTop: '18px', padding: '16px', borderRadius: '8px', background: '#ecfdf5', border: '1px solid #a7f3d0' }}>
                         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '10px' }}>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--status-allow)' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#059669' }}>
                             <CheckCircle2 size={18} />
-                            <strong style={{ fontSize: '0.9rem' }}>
-                              {isLiveSandbox ? 'Live PayPal Sandbox Payment Captured!' : 'Mock Payment Verified & Settled'}
+                            <strong style={{ fontSize: '0.92rem' }}>
+                              {isLiveSandbox ? 'Payment Completed on PayPal Sandbox' : 'Payment Settled Successfully'}
                             </strong>
                           </div>
-                          <span className="badge badge-allow" style={{ fontSize: '0.65rem' }}>SETTLED</span>
+                          <span className="badge badge-allow">Completed</span>
                         </div>
-                        <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px' }}>
-                          <div>Order ID: <code style={{ color: '#fff' }}>{checkoutSession.paypal_order_id}</code></div>
-                          <div>Capture ID: <code style={{ color: '#fff' }}>{checkoutSession.paypal_capture_id}</code></div>
-                          <div>Status: <strong style={{ color: 'var(--status-allow)' }}>COMPLETED</strong></div>
-                          <div>Amount: <strong style={{ color: '#fff' }}>₹{proposalRes.proposal?.total_amount?.toLocaleString()}</strong></div>
+                        <div style={{ fontSize: '0.78rem', color: '#334155', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px' }}>
+                          <div>Order ID: <code style={{ color: '#0f172a' }}>{checkoutSession.paypal_order_id}</code></div>
+                          <div>Capture ID: <code style={{ color: '#0f172a' }}>{checkoutSession.paypal_capture_id}</code></div>
+                          <div>Status: <strong style={{ color: '#059669' }}>COMPLETED</strong></div>
+                          <div>Total Charged: <strong style={{ color: '#0f172a' }}>₹{proposalRes.proposal?.total_amount?.toLocaleString()}</strong></div>
                         </div>
 
-                        {/* Interactive Cryptographic Receipt Verification Button */}
-                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', marginTop: '12px' }}>
+                        {/* Receipt Buttons */}
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', marginTop: '14px' }}>
                           <button
                             type="button"
                             onClick={() => handleOpenReceiptInspector(proposalRes.checkout_id)}
-                            className="btn btn-cyan"
-                            style={{ fontSize: '0.76rem', padding: '8px' }}
+                            className="btn btn-primary"
+                            style={{ fontSize: '0.78rem', padding: '8px' }}
                           >
-                            <Key size={13} /> Verify HMAC Signature
+                            <Key size={14} /> Verify Audit Signature
                           </button>
                           <button
                             type="button"
                             onClick={() => handleDownloadReceipt(proposalRes.checkout_id)}
                             className="btn btn-secondary"
-                            style={{ fontSize: '0.76rem', padding: '8px' }}
+                            style={{ fontSize: '0.78rem', padding: '8px' }}
                           >
-                            <Download size={13} /> Export Receipt JSON
+                            <Download size={14} /> Download Receipt JSON
                           </button>
                         </div>
 
-                        {/* Webhook Simulator */}
-                        <div style={{ marginTop: '14px', paddingTop: '12px', borderTop: '1px solid rgba(255,255,255,0.08)' }}>
-                          <div style={{ fontSize: '0.74rem', color: 'var(--text-secondary)', fontWeight: 600, marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                            <RotateCcw size={13} color="var(--accent-cyan)" /> Async PayPal Webhook Simulator:
+                        {/* Webhook Testing Controls */}
+                        <div style={{ marginTop: '14px', paddingTop: '12px', borderTop: '1px solid #d1fae5' }}>
+                          <div style={{ fontSize: '0.76rem', color: '#475569', fontWeight: 600, marginBottom: '8px' }}>
+                            Test Asynchronous PayPal Events:
                           </div>
                           <div style={{ display: 'flex', gap: '8px' }}>
                             <button
                               type="button"
                               onClick={() => handleSimulateWebhook(proposalRes.checkout_id, 'PAYMENT.CAPTURE.REFUNDED')}
                               className="btn btn-secondary"
-                              style={{ padding: '6px 10px', fontSize: '0.72rem', flex: 1 }}
+                              style={{ padding: '6px 10px', fontSize: '0.74rem', flex: 1 }}
                             >
-                              💸 Simulate Refund Webhook
+                              Simulate Refund Webhook
                             </button>
                             <button
                               type="button"
                               onClick={() => handleSimulateWebhook(proposalRes.checkout_id, 'CUSTOMER.DISPUTE.CREATED')}
                               className="btn btn-secondary"
-                              style={{ padding: '6px 10px', fontSize: '0.72rem', flex: 1 }}
+                              style={{ padding: '6px 10px', fontSize: '0.74rem', flex: 1 }}
                             >
-                              ⚠️ Simulate Dispute Webhook
+                              Simulate Dispute Webhook
                             </button>
                           </div>
                           {webhookStatus && (
-                            <div style={{ marginTop: '8px', fontSize: '0.72rem', color: 'var(--accent-cyan)', background: 'rgba(6,182,212,0.1)', padding: '6px 10px', borderRadius: '4px' }}>
+                            <div style={{ marginTop: '8px', fontSize: '0.75rem', color: '#0070ba', background: '#eff6ff', border: '1px solid #bfdbfe', padding: '6px 10px', borderRadius: '6px' }}>
                               {webhookStatus}
                             </div>
                           )}
@@ -1119,95 +1079,48 @@ export default function Home() {
                             href={`https://www.sandbox.paypal.com/activities/`}
                             target="_blank"
                             rel="noopener noreferrer"
-                            style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', marginTop: '10px', fontSize: '0.73rem', color: 'var(--accent-paypal)', textDecoration: 'none' }}
+                            style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', marginTop: '12px', fontSize: '0.76rem', color: '#0070ba', textDecoration: 'none' }}
                           >
-                            <ExternalLink size={12} /> View in PayPal Sandbox Dashboard
+                            <ExternalLink size={13} /> Open in PayPal Sandbox Dashboard
                           </a>
                         )}
                       </div>
                     )}
 
-                    {/* Webhook Refunded Receipt */}
-                    {checkoutSession?.state === 'REFUNDED' && (
-                      <div className="animate-fade-in" style={{ marginTop: '18px', padding: '16px', borderRadius: 'var(--radius-md)', background: 'rgba(168,85,247,0.12)', border: '1px solid rgba(168,85,247,0.35)' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#c084fc', marginBottom: '8px' }}>
-                          <RotateCcw size={18} />
-                          <strong style={{ fontSize: '0.9rem' }}>💸 Payment Refunded via Asynchronous Webhook!</strong>
-                        </div>
-                        <p style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', marginBottom: '10px' }}>
-                          PayPal webhook event <code style={{ color: '#c084fc' }}>PAYMENT.CAPTURE.REFUNDED</code> processed. Master policy and agent quota atomically restored.
-                        </p>
-                        <div style={{ display: 'flex', gap: '8px' }}>
-                          <button
-                            type="button"
-                            onClick={() => handleOpenReceiptInspector(proposalRes.checkout_id)}
-                            className="btn btn-cyan"
-                            style={{ flex: 1, fontSize: '0.76rem', padding: '8px' }}
-                          >
-                            <Key size={13} /> Verify Refund Proof
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => handleDownloadReceipt(proposalRes.checkout_id)}
-                            className="btn btn-secondary"
-                            style={{ flex: 1, fontSize: '0.76rem', padding: '8px' }}
-                          >
-                            <Download size={13} /> Export Receipt
-                          </button>
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Webhook Disputed Receipt */}
-                    {checkoutSession?.state === 'DISPUTED' && (
-                      <div className="animate-fade-in" style={{ marginTop: '18px', padding: '16px', borderRadius: 'var(--radius-md)', background: 'rgba(234,179,8,0.12)', border: '1px solid rgba(234,179,8,0.35)' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#facc15', marginBottom: '8px' }}>
-                          <AlertTriangle size={18} />
-                          <strong style={{ fontSize: '0.9rem' }}>⚠️ Payment Disputed via PayPal Webhook</strong>
-                        </div>
-                        <p style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', marginBottom: '10px' }}>
-                          PayPal customer dispute received. State marked DISPUTED in immutable ledger. Cryptographic signed receipt available for chargeback defense.
-                        </p>
-                        <button
-                          type="button"
-                          onClick={() => handleOpenReceiptInspector(proposalRes.checkout_id)}
-                          className="btn btn-cyan"
-                          style={{ width: '100%', fontSize: '0.76rem', padding: '8px' }}
-                        >
-                          <Key size={13} /> Verify Defense Evidence
-                        </button>
-                      </div>
-                    )}
-
-                    {/* Drift Blocked Receipt */}
+                    {/* Blocked Confirmation */}
                     {checkoutSession?.state === 'POLICY_REJECTED' && (
-                      <div className="animate-fade-in" style={{ marginTop: '18px', padding: '16px', borderRadius: 'var(--radius-md)', background: 'var(--status-reject-bg)', border: '1px solid var(--status-reject-border)' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--status-reject)', marginBottom: '6px' }}>
+                      <div style={{ marginTop: '18px', padding: '16px', borderRadius: '8px', background: '#fef2f2', border: '1px solid #fecaca' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#dc2626', marginBottom: '6px' }}>
                           <ShieldAlert size={18} />
-                          <strong style={{ fontSize: '0.88rem' }}>⛔ Pre-Execution Invariant Gate Intercepted!</strong>
+                          <strong style={{ fontSize: '0.92rem' }}>Unauthorized Transaction Blocked</strong>
                         </div>
-                        <p style={{ fontSize: '0.8rem', color: '#fca5a5', marginBottom: '6px' }}>{checkoutSession.failure_reason}</p>
-                        <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>Zero payment request sent to PayPal. Funds 100% protected.</span>
-                        <div style={{ display: 'flex', gap: '8px', marginTop: '10px' }}>
+                        <p style={{ fontSize: '0.82rem', color: '#b91c1c', marginBottom: '8px' }}>
+                          {checkoutSession.failure_reason}
+                        </p>
+                        <p style={{ fontSize: '0.75rem', color: '#64748b' }}>
+                          No payment request was sent to PayPal. Your balance and team quotas remain untouched.
+                        </p>
+                        <div style={{ display: 'flex', gap: '8px', marginTop: '12px' }}>
                           <button
                             type="button"
                             onClick={() => handleOpenReceiptInspector(proposalRes.checkout_id)}
                             className="btn btn-danger"
-                            style={{ flex: 1, fontSize: '0.76rem', padding: '8px' }}
+                            style={{ flex: 1, fontSize: '0.78rem', padding: '8px' }}
                           >
-                            <Key size={13} /> Verify Refusal Proof
+                            <Key size={14} /> View Refusal Record
                           </button>
                           <button
                             type="button"
                             onClick={() => handleDownloadReceipt(proposalRes.checkout_id)}
                             className="btn btn-secondary"
-                            style={{ flex: 1, fontSize: '0.76rem', padding: '8px' }}
+                            style={{ flex: 1, fontSize: '0.78rem', padding: '8px' }}
                           >
-                            <Download size={13} /> Export Receipt
+                            <Download size={14} /> Export JSON
                           </button>
                         </div>
                       </div>
                     )}
+
                   </div>
                 )}
               </div>
@@ -1215,67 +1128,63 @@ export default function Home() {
           )}
 
           {/* ══════════════════════════════════════════════════════ */}
-          {/* VIEW 2: INTEGRITY LAB (BENCHMARK MATRIX)              */}
+          {/* VIEW 2: POLICY TEST LAB (BENCHMARK)                   */}
           {/* ══════════════════════════════════════════════════════ */}
           {activeTab === 'lab' && (
-            <div className="animate-fade-in" style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
-              {/* Header Bar */}
-              <div className="glass-panel" style={{ padding: '22px 28px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '22px' }}>
+              <div className="clean-card" style={{ padding: '22px 28px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                    <Layers size={22} color="var(--accent-cyan)" />
-                    <h2 style={{ fontSize: '1.3rem', fontWeight: 800 }}>Integrity Lab — Adversarial Benchmark Matrix</h2>
-                  </div>
-                  <p style={{ color: 'var(--text-muted)', fontSize: '0.82rem', marginTop: '4px' }}>
-                    7 controlled attack scenarios × 3 architectural systems (Baseline A · Baseline B · APIL)
+                  <h3 style={{ fontSize: '1.15rem', fontWeight: 700, color: '#0f172a' }}>Policy Enforcement Test Lab</h3>
+                  <p style={{ color: '#64748b', fontSize: '0.82rem', marginTop: '2px' }}>
+                    Automated testing across 7 real-world failure and attack scenarios
                   </p>
                 </div>
-                <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
                   <select
                     value={selectedSystem}
                     onChange={(e) => setSelectedSystem(e.target.value as any)}
-                    style={{ background: 'rgba(0,0,0,0.4)', border: '1px solid var(--border-subtle)', color: '#fff', borderRadius: 'var(--radius-sm)', padding: '7px 12px', fontSize: '0.8rem' }}
+                    style={{ background: '#ffffff', border: '1px solid #cbd5e1', color: '#0f172a', borderRadius: '6px', padding: '7px 12px', fontSize: '0.84rem' }}
                   >
-                    <option value="PROPOSED_APIL">Proposed APIL (Ours)</option>
-                    <option value="BASELINE_A">Baseline A (No Gate)</option>
-                    <option value="BASELINE_B">Baseline B (Static Gate)</option>
+                    <option value="PROPOSED_APIL">Proposed APIL (With Policy Guard)</option>
+                    <option value="BASELINE_A">Baseline A (No Policy Gate)</option>
+                    <option value="BASELINE_B">Baseline B (Basic Static Limits)</option>
                   </select>
-                  <button onClick={handleRunBenchmark} disabled={labRunning} className="btn btn-cyan">
+                  <button onClick={handleRunBenchmark} disabled={labRunning} className="btn btn-primary">
                     {labRunning ? <RefreshCw className="animate-spin" size={15} /> : <Play size={15} />}
-                    {labRunning ? 'Running Evaluation...' : 'Run All 7 Scenarios'}
+                    {labRunning ? 'Running Tests...' : 'Run All 7 Scenarios'}
                   </button>
                 </div>
               </div>
 
-              {/* Summary Stats Cards */}
+              {/* Benchmark Summary Metrics */}
               {benchmarkReport && (
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '16px' }}>
                   {[
-                    { label: 'Pass Rate', value: `${benchmarkReport.pass_rate_pct?.toFixed(1)}%`, color: benchmarkReport.pass_rate_pct === 100 ? '#34d399' : '#fbbf24' },
-                    { label: 'Total Scenarios', value: benchmarkReport.total_scenarios, color: '#60a5fa' },
-                    { label: 'Unauthorized Spends', value: benchmarkReport.unauthorized_spend_count ?? '0', color: benchmarkReport.unauthorized_spend_count === 0 ? '#34d399' : '#f87171' },
-                    { label: 'Avg Gate Latency', value: `${benchmarkReport.avg_latency_ms?.toFixed(2)} ms`, color: '#a78bfa' },
+                    { label: 'Policy Pass Rate', value: `${benchmarkReport.pass_rate_pct?.toFixed(1)}%`, color: benchmarkReport.pass_rate_pct === 100 ? '#059669' : '#d97706' },
+                    { label: 'Total Test Scenarios', value: benchmarkReport.total_scenarios, color: '#0070ba' },
+                    { label: 'Unauthorized Spends', value: benchmarkReport.unauthorized_spend_count ?? '0', color: benchmarkReport.unauthorized_spend_count === 0 ? '#059669' : '#dc2626' },
+                    { label: 'Average Evaluation Speed', value: `${benchmarkReport.avg_latency_ms?.toFixed(2)} ms`, color: '#6366f1' },
                   ].map(({ label, value, color }) => (
-                    <div key={label} className="glass-panel" style={{ padding: '20px', textAlign: 'center' }}>
-                      <div style={{ fontSize: '1.7rem', fontWeight: 800, color, letterSpacing: '-0.02em' }}>{value}</div>
-                      <div style={{ fontSize: '0.74rem', color: 'var(--text-muted)', marginTop: '4px' }}>{label}</div>
+                    <div key={label} className="clean-card" style={{ padding: '20px', textAlign: 'center' }}>
+                      <div style={{ fontSize: '1.75rem', fontWeight: 800, color, letterSpacing: '-0.02em' }}>{value}</div>
+                      <div style={{ fontSize: '0.76rem', color: '#64748b', marginTop: '4px' }}>{label}</div>
                     </div>
                   ))}
                 </div>
               )}
 
               {/* Scenario Results Table */}
-              <div className="glass-panel" style={{ padding: '0', overflow: 'hidden' }}>
-                <div style={{ padding: '18px 24px', borderBottom: '1px solid var(--border-subtle)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <h3 style={{ fontSize: '0.95rem', fontWeight: 700 }}>Adversarial Attack Scenario Breakdown</h3>
-                  <span className="badge badge-neutral" style={{ fontSize: '0.64rem' }}>Zero False Authorizations</span>
+              <div className="clean-card" style={{ overflow: 'hidden' }}>
+                <div style={{ padding: '16px 24px', borderBottom: '1px solid #e2e8f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <h4 style={{ fontSize: '0.92rem', fontWeight: 700, color: '#0f172a' }}>Scenario Results</h4>
+                  <span className="badge badge-neutral">Full Coverage</span>
                 </div>
                 <div style={{ overflowX: 'auto' }}>
-                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.82rem' }}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.84rem' }}>
                     <thead>
-                      <tr style={{ borderBottom: '1px solid var(--border-subtle)', background: 'rgba(255,255,255,0.01)' }}>
-                        {['Scenario ID', 'Threat Category', 'Attack Payload', 'Evaluation System', 'Enforcement Result', 'Gate Latency'].map((h) => (
-                          <th key={h} style={{ padding: '12px 16px', textAlign: 'left', color: 'var(--text-muted)', fontWeight: 600, fontSize: '0.73rem', letterSpacing: '0.04em', whiteSpace: 'nowrap' }}>{h}</th>
+                      <tr style={{ borderBottom: '1px solid #e2e8f0', background: '#f8fafc' }}>
+                        {['Scenario', 'Category', 'Test Condition', 'System Under Test', 'Result', 'Evaluation Time'].map((h) => (
+                          <th key={h} style={{ padding: '11px 16px', textAlign: 'left', color: '#64748b', fontWeight: 600, fontSize: '0.74rem' }}>{h}</th>
                         ))}
                       </tr>
                     </thead>
@@ -1284,24 +1193,24 @@ export default function Home() {
                         const passed = row.passed;
                         const scenarioDef = labScenarios.find((s: any) => s.scenario_id === row.scenario_id);
                         return (
-                          <tr key={i} style={{ borderBottom: '1px solid rgba(255,255,255,0.03)' }}>
-                            <td style={{ padding: '12px 16px', fontWeight: 700, color: '#fff', fontFamily: 'JetBrains Mono, monospace' }}>{row.scenario_id || '-'}</td>
+                          <tr key={i} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                            <td style={{ padding: '12px 16px', fontWeight: 600, color: '#0f172a' }}>{row.scenario_id || '-'}</td>
                             <td style={{ padding: '12px 16px' }}>
-                              <span className="badge badge-neutral" style={{ fontSize: '0.68rem' }}>{row.category || scenarioDef?.category || '-'}</span>
+                              <span className="badge badge-neutral" style={{ fontSize: '0.72rem' }}>{row.category || scenarioDef?.category || '-'}</span>
                             </td>
-                            <td style={{ padding: '12px 16px', color: 'var(--text-secondary)' }}>{row.failure_type || row.name || '-'}</td>
-                            <td style={{ padding: '12px 16px', color: 'var(--accent-cyan)', fontSize: '0.75rem', fontWeight: 600 }}>{row.system_type || selectedSystem}</td>
+                            <td style={{ padding: '12px 16px', color: '#475569' }}>{row.failure_type || row.name || '-'}</td>
+                            <td style={{ padding: '12px 16px', color: '#0070ba', fontWeight: 600 }}>{row.system_type || selectedSystem}</td>
                             <td style={{ padding: '12px 16px' }}>
                               {passed != null ? (
-                                <span className={`badge ${passed ? 'badge-allow' : 'badge-reject'}`} style={{ fontSize: '0.68rem' }}>
-                                  {passed ? '✓ Attack Blocked' : '✗ Unauthorized Spend'}
+                                <span className={`badge ${passed ? 'badge-allow' : 'badge-reject'}`}>
+                                  {passed ? '✓ Protected' : '✗ Failed (Money Spent)'}
                                 </span>
                               ) : (
-                                <span className="badge badge-neutral" style={{ fontSize: '0.68rem' }}>Pending</span>
+                                <span className="badge badge-neutral">Pending</span>
                               )}
                             </td>
-                            <td style={{ padding: '12px 16px', color: 'var(--text-muted)', fontFamily: 'JetBrains Mono, monospace', fontSize: '0.75rem' }}>
-                              {row.latency_ms != null ? `${row.latency_ms.toFixed(2)} ms` : '< 1.5 ms'}
+                            <td style={{ padding: '12px 16px', color: '#64748b', fontFamily: 'JetBrains Mono, monospace', fontSize: '0.76rem' }}>
+                              {row.latency_ms != null ? `${row.latency_ms.toFixed(2)} ms` : '< 1 ms'}
                             </td>
                           </tr>
                         );
@@ -1311,30 +1220,32 @@ export default function Home() {
                 </div>
               </div>
 
-              {/* System Architecture Comparison Matrix */}
-              <div className="glass-panel" style={{ padding: '22px 28px' }}>
-                <h3 style={{ fontSize: '0.95rem', fontWeight: 700, marginBottom: '16px' }}>System Architecture Comparison Matrix</h3>
+              {/* Architecture Comparison */}
+              <div className="clean-card" style={{ padding: '22px 28px' }}>
+                <h4 style={{ fontSize: '0.92rem', fontWeight: 700, color: '#0f172a', marginBottom: '14px' }}>
+                  Architecture Comparison
+                </h4>
                 <div style={{ overflowX: 'auto' }}>
-                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.82rem' }}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.84rem' }}>
                     <thead>
-                      <tr style={{ borderBottom: '1px solid var(--border-subtle)' }}>
-                        {['Architecture System', 'Attack Defense Rate', 'Unauthorized Spends', 'Enforcement Latency', 'Cryptographic Receipts'].map((h) => (
-                          <th key={h} style={{ padding: '10px 16px', textAlign: 'left', color: 'var(--text-muted)', fontWeight: 600, fontSize: '0.72rem', letterSpacing: '0.04em' }}>{h}</th>
+                      <tr style={{ borderBottom: '1px solid #e2e8f0', background: '#f8fafc' }}>
+                        {['Architecture', 'Attack Defense Rate', 'Unauthorized Spends', 'Latency', 'Audit Records'].map((h) => (
+                          <th key={h} style={{ padding: '10px 16px', textAlign: 'left', color: '#64748b', fontWeight: 600, fontSize: '0.74rem' }}>{h}</th>
                         ))}
                       </tr>
                     </thead>
                     <tbody>
                       {[
                         { sys: 'Baseline A (No Policy Gate)', pass: '14.3%', unauth: '6', lat: '0.10 ms', receipts: 'None', highlight: false },
-                        { sys: 'Baseline B (Static Bounds Gate)', pass: '57.1%', unauth: '3', lat: '0.09 ms', receipts: 'Unsigned logs', highlight: false },
-                        { sys: 'Proposed APIL (Our Invariant Layer)', pass: '100.0%', unauth: '0', lat: '0.08 ms', receipts: 'HMAC-SHA256 Signed', highlight: true },
+                        { sys: 'Baseline B (Static Limits Only)', pass: '57.1%', unauth: '3', lat: '0.09 ms', receipts: 'Unsigned logs', highlight: false },
+                        { sys: 'Proposed APIL (Our Solution)', pass: '100.0%', unauth: '0', lat: '0.08 ms', receipts: 'Cryptographically Signed', highlight: true },
                       ].map(({ sys, pass, unauth, lat, receipts, highlight }) => (
-                        <tr key={sys} style={{ borderBottom: '1px solid rgba(255,255,255,0.03)', background: highlight ? 'rgba(6,182,212,0.04)' : 'transparent' }}>
-                          <td style={{ padding: '11px 16px', fontWeight: highlight ? 700 : 400, color: highlight ? 'var(--accent-cyan)' : '#fff' }}>{sys}</td>
-                          <td style={{ padding: '11px 16px', color: pass === '100.0%' ? '#34d399' : '#fbbf24', fontWeight: 700 }}>{pass}</td>
-                          <td style={{ padding: '11px 16px', color: unauth === '0' ? '#34d399' : '#f87171', fontWeight: 700 }}>{unauth}</td>
-                          <td style={{ padding: '11px 16px', color: 'var(--text-secondary)', fontFamily: 'monospace' }}>{lat}</td>
-                          <td style={{ padding: '11px 16px', color: highlight ? '#a78bfa' : 'var(--text-muted)', fontWeight: highlight ? 600 : 400 }}>{receipts}</td>
+                        <tr key={sys} style={{ borderBottom: '1px solid #f1f5f9', background: highlight ? '#eff6ff' : 'transparent' }}>
+                          <td style={{ padding: '11px 16px', fontWeight: highlight ? 700 : 500, color: highlight ? '#0070ba' : '#0f172a' }}>{sys}</td>
+                          <td style={{ padding: '11px 16px', color: pass === '100.0%' ? '#059669' : '#d97706', fontWeight: 700 }}>{pass}</td>
+                          <td style={{ padding: '11px 16px', color: unauth === '0' ? '#059669' : '#dc2626', fontWeight: 700 }}>{unauth}</td>
+                          <td style={{ padding: '11px 16px', color: '#64748b', fontFamily: 'monospace' }}>{lat}</td>
+                          <td style={{ padding: '11px 16px', color: highlight ? '#0070ba' : '#64748b', fontWeight: highlight ? 600 : 400 }}>{receipts}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -1345,58 +1256,62 @@ export default function Home() {
           )}
 
           {/* ══════════════════════════════════════════════════════ */}
-          {/* VIEW 3: AUDIT LEDGER (SHA-256 CHAIN)                   */}
+          {/* VIEW 3: AUDIT TRAIL                                   */}
           {/* ══════════════════════════════════════════════════════ */}
           {activeTab === 'audit' && (
-            <div className="animate-fade-in" style={{ display: 'flex', flexDirection: 'column', gap: '22px' }}>
-              <div className="glass-panel" style={{ padding: '22px 28px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '22px' }}>
+              <div className="clean-card" style={{ padding: '22px 28px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                    <Database size={22} color="var(--accent-cyan)" />
-                    <h2 style={{ fontSize: '1.3rem', fontWeight: 800 }}>Cryptographic Audit Ledger</h2>
-                  </div>
-                  <p style={{ color: 'var(--text-muted)', fontSize: '0.82rem', marginTop: '4px' }}>
-                    SHA-256 hash-chained tamper-evident event log with RFC-2104 signatures
+                  <h3 style={{ fontSize: '1.15rem', fontWeight: 700, color: '#0f172a' }}>Audit Trail & Ledger</h3>
+                  <p style={{ color: '#64748b', fontSize: '0.82rem', marginTop: '2px' }}>
+                    Immutable sequence of every purchase event and policy verification
                   </p>
                 </div>
                 <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
                   {auditData && (
                     <span className={`badge ${auditData.ledger_integrity_valid ? 'badge-allow' : 'badge-reject'}`}>
-                      {auditData.ledger_integrity_valid ? '✓ Ledger Integrity Valid' : '✗ INTEGRITY VIOLATION'}
+                      {auditData.ledger_integrity_valid ? '✓ Ledger Valid & Tamper-Free' : '✗ Integrity Check Failed'}
                     </span>
                   )}
-                  <button onClick={fetchAuditEvents} className="btn btn-secondary" style={{ fontSize: '0.8rem' }}>
-                    <RefreshCw size={14} /> Refresh Ledger
+                  <button onClick={fetchAuditEvents} className="btn btn-secondary">
+                    <RefreshCw size={14} /> Refresh
                   </button>
                 </div>
               </div>
 
               {auditData?.events?.length > 0 ? (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
                   {auditData.events.map((ev: any, i: number) => (
-                    <div key={i} className="glass-panel animate-fade-in" style={{ padding: '16px 20px', borderLeft: `3px solid ${ev.event_type.includes('BLOCKED') || ev.event_type.includes('REJECTED') ? 'var(--status-reject)' : ev.event_type.includes('COMPLETED') || ev.event_type.includes('PAID') ? 'var(--status-allow)' : 'var(--accent-cyan)'}` }}>
+                    <div
+                      key={i}
+                      className="clean-card"
+                      style={{
+                        padding: '16px 20px',
+                        borderLeft: `3px solid ${ev.event_type.includes('BLOCKED') || ev.event_type.includes('REJECTED') ? '#dc2626' : ev.event_type.includes('COMPLETED') || ev.event_type.includes('PAID') ? '#059669' : '#0070ba'}`,
+                      }}
+                    >
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '6px' }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                          <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', fontFamily: 'JetBrains Mono, monospace' }}>#{i + 1}</span>
-                          <strong style={{ fontSize: '0.85rem', color: '#fff' }}>{ev.event_type}</strong>
-                          {ev.checkout_id && <span className="badge badge-neutral" style={{ fontSize: '0.65rem' }}>{ev.checkout_id}</span>}
+                          <span style={{ fontSize: '0.74rem', color: '#94a3b8', fontFamily: 'JetBrains Mono, monospace' }}>#{i + 1}</span>
+                          <strong style={{ fontSize: '0.88rem', color: '#0f172a' }}>{ev.event_type}</strong>
+                          {ev.checkout_id && <span className="badge badge-neutral" style={{ fontSize: '0.68rem' }}>{ev.checkout_id}</span>}
                         </div>
-                        <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', fontFamily: 'JetBrains Mono, monospace' }}>{ev.timestamp}</span>
+                        <span style={{ fontSize: '0.72rem', color: '#64748b', fontFamily: 'JetBrains Mono, monospace' }}>{ev.timestamp}</span>
                       </div>
-                      {ev.reason && <p style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', margin: '4px 0 8px' }}>{ev.reason}</p>}
+                      {ev.reason && <p style={{ fontSize: '0.82rem', color: '#475569', margin: '4px 0 8px' }}>{ev.reason}</p>}
                       <div style={{ display: 'flex', gap: '20px', flexWrap: 'wrap' }}>
                         {ev.event_hash && (
-                          <div style={{ fontSize: '0.68rem' }}>
-                            <span style={{ color: 'var(--text-muted)', marginRight: '4px' }}>Hash:</span>
-                            <code style={{ color: 'var(--accent-cyan)', cursor: 'pointer' }} onClick={() => copyToClipboard(ev.event_hash)}>
-                              {ev.event_hash.slice(0, 16)}…{ev.event_hash.slice(-8)}
+                          <div style={{ fontSize: '0.72rem' }}>
+                            <span style={{ color: '#64748b', marginRight: '4px' }}>Hash:</span>
+                            <code style={{ color: '#0070ba', cursor: 'pointer' }} onClick={() => copyToClipboard(ev.event_hash)}>
+                              {ev.event_hash.slice(0, 18)}…{ev.event_hash.slice(-8)}
                             </code>
                           </div>
                         )}
                         {ev.proposal_fingerprint && (
-                          <div style={{ fontSize: '0.68rem' }}>
-                            <span style={{ color: 'var(--text-muted)', marginRight: '4px' }}>Fingerprint:</span>
-                            <code style={{ color: '#94a3b8' }}>{ev.proposal_fingerprint.slice(0, 16)}…</code>
+                          <div style={{ fontSize: '0.72rem' }}>
+                            <span style={{ color: '#64748b', marginRight: '4px' }}>Proposal Fingerprint:</span>
+                            <code style={{ color: '#64748b' }}>{ev.proposal_fingerprint.slice(0, 18)}…</code>
                           </div>
                         )}
                       </div>
@@ -1404,65 +1319,64 @@ export default function Home() {
                   ))}
                 </div>
               ) : (
-                <div className="glass-panel" style={{ padding: '60px', textAlign: 'center', color: 'var(--text-muted)' }}>
-                  <Eye size={40} strokeWidth={1.2} style={{ marginBottom: '14px', opacity: 0.35 }} />
-                  <p style={{ fontSize: '0.9rem' }}>No audit events yet. Run a purchase flow or lab scenario first.</p>
+                <div className="clean-card" style={{ padding: '60px', textAlign: 'center', color: '#64748b' }}>
+                  <Eye size={40} strokeWidth={1.3} style={{ margin: '0 auto 12px', color: '#cbd5e1' }} />
+                  <p style={{ fontSize: '0.9rem' }}>No audit events logged yet. Complete a purchase or run the test lab first.</p>
                 </div>
               )}
             </div>
           )}
+
         </div>
 
         {/* ══════════════════════════════════════════════════════ */}
-        {/* INTERACTIVE HMAC-SHA256 RECEIPT INSPECTOR MODAL       */}
+        {/* RECEIPT INSPECTOR MODAL                                */}
         {/* ══════════════════════════════════════════════════════ */}
         {receiptModalOpen && inspectingReceipt && (
           <div className="modal-overlay animate-fade-in" onClick={() => setReceiptModalOpen(false)}>
             <div
-              className="glass-panel"
+              className="clean-card"
               style={{
                 width: '100%',
                 maxWidth: '680px',
                 padding: '28px',
-                background: 'rgba(10, 14, 24, 0.96)',
-                border: '1px solid rgba(6, 182, 212, 0.3)',
-                boxShadow: '0 20px 60px rgba(0, 0, 0, 0.8), 0 0 30px rgba(6, 182, 212, 0.15)',
+                boxShadow: '0 20px 40px rgba(0, 0, 0, 0.15)',
               }}
               onClick={(e) => e.stopPropagation()}
             >
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '18px' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                  <div style={{ width: '32px', height: '32px', borderRadius: '8px', background: 'rgba(6,182,212,0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                    <Key size={18} color="var(--accent-cyan)" />
+                  <div style={{ width: '36px', height: '36px', borderRadius: '8px', background: '#eff6ff', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    <Key size={18} color="#0070ba" />
                   </div>
                   <div>
-                    <h3 style={{ fontSize: '1.05rem', fontWeight: 700, color: '#fff' }}>Cryptographic Audit Receipt Inspector</h3>
-                    <p style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>RFC-2104 HMAC-SHA256 Non-Repudiation Proof</p>
+                    <h3 style={{ fontSize: '1.08rem', fontWeight: 700, color: '#0f172a' }}>Payment Audit Receipt</h3>
+                    <p style={{ fontSize: '0.76rem', color: '#64748b' }}>Cryptographically signed proof of authorized purchase</p>
                   </div>
                 </div>
                 <button
                   onClick={() => setReceiptModalOpen(false)}
-                  style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: '1.2rem' }}
+                  style={{ background: 'none', border: 'none', color: '#64748b', cursor: 'pointer', fontSize: '1.2rem', padding: '4px' }}
                 >
                   <X size={20} />
                 </button>
               </div>
 
-              {/* Live Verification Badge */}
+              {/* Verification Status Banner */}
               <div
                 style={{
                   padding: '12px 16px',
-                  borderRadius: 'var(--radius-md)',
+                  borderRadius: '8px',
                   background: receiptVerificationState === 'valid'
-                    ? 'rgba(16, 185, 129, 0.12)'
+                    ? '#ecfdf5'
                     : receiptVerificationState === 'verifying'
-                    ? 'rgba(6, 182, 212, 0.12)'
-                    : 'rgba(239, 68, 68, 0.12)',
+                    ? '#eff6ff'
+                    : '#fef2f2',
                   border: receiptVerificationState === 'valid'
-                    ? '1px solid rgba(16, 185, 129, 0.4)'
+                    ? '1px solid #a7f3d0'
                     : receiptVerificationState === 'verifying'
-                    ? '1px solid rgba(6, 182, 212, 0.4)'
-                    : '1px solid rgba(239, 68, 68, 0.4)',
+                    ? '1px solid #bfdbfe'
+                    : '1px solid #fecaca',
                   display: 'flex',
                   alignItems: 'center',
                   gap: '12px',
@@ -1471,32 +1385,32 @@ export default function Home() {
               >
                 {receiptVerificationState === 'valid' ? (
                   <>
-                    <CheckCheck size={22} color="#34d399" />
+                    <CheckCheck size={22} color="#059669" />
                     <div>
-                      <div style={{ fontSize: '0.85rem', fontWeight: 700, color: '#34d399' }}>
-                        ✓ SIGNATURE VALID & TAMPER-FREE
+                      <div style={{ fontSize: '0.86rem', fontWeight: 700, color: '#059669' }}>
+                        Signature Verified Authentic
                       </div>
-                      <div style={{ fontSize: '0.72rem', color: 'var(--text-secondary)' }}>
-                        Verified via constant-time compare against backend secret key.
+                      <div style={{ fontSize: '0.74rem', color: '#334155' }}>
+                        HMAC-SHA256 signature confirms this receipt has not been modified since creation.
                       </div>
                     </div>
                   </>
                 ) : receiptVerificationState === 'verifying' ? (
                   <>
-                    <RefreshCw size={20} className="animate-spin" color="#22d3ee" />
-                    <div style={{ fontSize: '0.85rem', color: '#22d3ee' }}>
-                      Executing constant-time HMAC-SHA256 signature verification...
+                    <RefreshCw size={20} className="animate-spin" color="#0070ba" />
+                    <div style={{ fontSize: '0.86rem', color: '#0070ba' }}>
+                      Checking signature against secret key...
                     </div>
                   </>
                 ) : (
                   <>
-                    <ShieldAlert size={22} color="#f87171" />
+                    <ShieldAlert size={22} color="#dc2626" />
                     <div>
-                      <div style={{ fontSize: '0.85rem', fontWeight: 700, color: '#f87171' }}>
-                        ✗ SIGNATURE VERIFICATION FAILED
+                      <div style={{ fontSize: '0.86rem', fontWeight: 700, color: '#dc2626' }}>
+                        Signature Verification Failed
                       </div>
-                      <div style={{ fontSize: '0.72rem', color: '#fca5a5' }}>
-                        {receiptVerificationDetails?.error || 'Receipt contents do not match HMAC signature.'}
+                      <div style={{ fontSize: '0.74rem', color: '#b91c1c' }}>
+                        {receiptVerificationDetails?.error || 'Receipt contents do not match the expected cryptographic signature.'}
                       </div>
                     </div>
                   </>
@@ -1505,10 +1419,10 @@ export default function Home() {
 
               {/* Receipt Payload Viewer */}
               <div style={{ marginBottom: '16px' }}>
-                <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', display: 'block', marginBottom: '6px' }}>
-                  CANONICAL AUDIT RECEIPT PAYLOAD:
+                <span style={{ fontSize: '0.74rem', color: '#64748b', display: 'block', marginBottom: '6px', fontWeight: 600 }}>
+                  RECEIPT CONTENTS:
                 </span>
-                <pre className="code-block" style={{ maxHeight: '220px' }}>
+                <pre className="code-block" style={{ maxHeight: '240px' }}>
                   {JSON.stringify(inspectingReceipt, null, 2)}
                 </pre>
               </div>
@@ -1526,22 +1440,23 @@ export default function Home() {
                     URL.revokeObjectURL(url);
                   }}
                   className="btn btn-secondary"
-                  style={{ fontSize: '0.78rem' }}
+                  style={{ fontSize: '0.8rem' }}
                 >
-                  <Download size={14} /> Download File
+                  <Download size={14} /> Download Receipt File
                 </button>
                 <button
                   type="button"
                   onClick={() => setReceiptModalOpen(false)}
-                  className="btn btn-cyan"
-                  style={{ fontSize: '0.78rem' }}
+                  className="btn btn-primary"
+                  style={{ fontSize: '0.8rem' }}
                 >
-                  Close Inspector
+                  Close
                 </button>
               </div>
             </div>
           </div>
         )}
+
       </main>
     </PayPalScriptProvider>
   );
