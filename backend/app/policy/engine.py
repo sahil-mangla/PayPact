@@ -195,7 +195,42 @@ class DeterministicPolicyEngine:
             )
         )
 
-        # 6. Line Item Sum Validation (Subtotal Integrity)
+        # 6. Non-positive Amount & Fee Integrity Check (Defense-in-Depth)
+        has_invalid_items = any(
+            item.quantity <= 0 or item.unit_price <= 0 for item in proposal.items
+        )
+        if (
+            has_invalid_items
+            or proposal.item_subtotal <= 0
+            or proposal.total_amount <= 0
+            or proposal.shipping_fee < 0
+            or proposal.tax_fee < 0
+        ):
+            checks.append(
+                IntegrityCheckResult(
+                    check_name="positive_amount_check",
+                    passed=False,
+                    reason="Proposal contains non-positive item prices, invalid quantities, or negative fee values.",
+                )
+            )
+            return PolicyEvaluationResult(
+                decision=PolicyDecisionType.REJECT,
+                policy_id=policy.policy_id,
+                policy_version=policy.version,
+                proposal_fingerprint=fingerprint,
+                checks=checks,
+                primary_reason="Invalid non-positive amount or negative fees detected.",
+                evaluated_at=now,
+            )
+        checks.append(
+            IntegrityCheckResult(
+                check_name="positive_amount_check",
+                passed=True,
+                reason="All line items and fees are valid positive numbers.",
+            )
+        )
+
+        # 7. Line Item Sum Validation (Subtotal Integrity)
         calculated_subtotal = round(
             sum(item.quantity * item.unit_price for item in proposal.items), 2
         )
@@ -231,7 +266,7 @@ class DeterministicPolicyEngine:
             )
         )
 
-        # 7. Total Amount Sum Validation (Total Integrity)
+        # 8. Total Amount Sum Validation (Total Integrity)
         calculated_total = round(
             proposal.item_subtotal + proposal.shipping_fee + proposal.tax_fee, 2
         )
@@ -267,7 +302,7 @@ class DeterministicPolicyEngine:
             )
         )
 
-        # 8. Maximum Total Budget Check (Ceiling)
+        # 9. Maximum Total Budget Check (Ceiling)
         if proposal.total_amount > policy.maximum_total:
             checks.append(
                 IntegrityCheckResult(
@@ -304,7 +339,7 @@ class DeterministicPolicyEngine:
             )
         )
 
-        # 8b. Cumulative Master Spend Check
+        # 9b. Cumulative Master Spend Check
         remaining_master_budget = round(policy.maximum_total - policy.spent_total, 2)
         if policy.spent_total > 0 and proposal.total_amount > remaining_master_budget:
             checks.append(

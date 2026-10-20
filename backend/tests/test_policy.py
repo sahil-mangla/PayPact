@@ -180,3 +180,29 @@ def test_pre_execution_detects_drift_after_approval(default_policy):
 
     assert reval.decision == PolicyDecisionType.REJECT
     assert "drifted" in reval.primary_reason.lower()
+
+
+def test_rejects_non_positive_amount_and_negative_fee(default_policy):
+    from app.models.schemas import LineItem, PurchaseProposal
+
+    # Construct invalid item directly
+    bad_item = LineItem.model_construct(
+        sku="SKU-BAD", name="Negative Item", quantity=1, unit_price=-100.00
+    )
+    bad_proposal = PurchaseProposal.model_construct(
+        proposal_id="prop_bad",
+        policy_id=default_policy.policy_id,
+        policy_version=default_policy.version,
+        merchant="Keychron India",
+        items=[bad_item],
+        item_subtotal=-100.00,
+        shipping_fee=0.00,
+        tax_fee=0.00,
+        total_amount=-100.00,
+        currency="INR",
+    )
+
+    result = DeterministicPolicyEngine.evaluate(bad_proposal, default_policy)
+    assert result.decision == PolicyDecisionType.REJECT
+    assert "Invalid non-positive amount" in result.primary_reason
+    assert any(c.check_name == "positive_amount_check" and not c.passed for c in result.checks)

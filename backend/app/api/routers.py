@@ -87,8 +87,10 @@ class LabRunRequest(BaseModel):
 async def health_check():
     is_mock = coordinator.paypal_client.mock_mode
     from app.agent.ollama_client import OllamaClient
+    from app.agent.gemini_client import GeminiClient
 
     ollama_info = OllamaClient.check_health()
+    gemini_info = GeminiClient.check_health()
     return {
         "status": "healthy",
         "service": "Agent Payment Integrity Layer (APIL)",
@@ -97,6 +99,7 @@ async def health_check():
         if not is_mock
         else None,
         "ollama": ollama_info,
+        "gemini": gemini_info,
     }
 
 
@@ -214,8 +217,9 @@ async def execute_checkout(checkout_id: str, req: ExecutePaymentRequest):
         )
     elif req.simulate_drift_type == "sku_substitution":
         sub_sku = req.drift_sku or "KB-SUBSTITUTED-CHEAP"
-        live_proposal.items[0].sku = sub_sku
-        live_proposal.items[0].name = "Substituted SKU"
+        if live_proposal.items:
+            live_proposal.items[0].sku = sub_sku
+            live_proposal.items[0].name = "Substituted SKU"
 
     sim_timeout = req.simulate_drift_type == "timeout"
 

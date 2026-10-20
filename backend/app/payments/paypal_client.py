@@ -167,10 +167,12 @@ class PayPalClient:
         for item in proposal.items:
             unit_val = round(item.unit_price * conv_rate, 2)
             item_total_sum += round(unit_val * item.quantity, 2)
+            clean_name = (item.name.strip() or "Item")[:127]
+            clean_sku = (item.sku.strip() or "SKU")[:127]
             items_payload.append(
                 {
-                    "name": item.name[:127],
-                    "sku": item.sku[:127],
+                    "name": clean_name,
+                    "sku": clean_sku,
                     "quantity": str(item.quantity),
                     "unit_amount": {
                         "currency_code": paypal_currency,
