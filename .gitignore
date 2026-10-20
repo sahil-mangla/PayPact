@@ -54,3 +54,8 @@ brag-output/
 *.mp4
 *.webm
 *.mov
+
+# Internal Hackathon Submission & Handover Docs
+docs/DEVPOST_SUBMISSION.md
+docs/HANDOVER_CONTEXT.md
+
