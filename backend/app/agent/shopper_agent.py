@@ -353,7 +353,20 @@ class ShopperAgent:
                 rationale = None
 
         if rationale:
-            explanation = f"{rationale} {source_tag}".strip()
+            r_clean = rationale.strip()
+            # Double check for dangling conjunctions or cut-offs
+            words = r_clean.split()
+            last_word = words[-1].lower().strip(".,;:?!\"'") if words else ""
+            dangling = {"that", "and", "or", "but", "with", "for", "to", "at", "by", "of", "in", "is", "a", "an", "the", "which", "as", "from", "on"}
+            if last_word in dangling:
+                r_clean = (
+                    r_clean.rstrip(" ,;:-")
+                    + f" delivers dependable performance while strictly satisfying your spending limits at {target_product.unit_price:.0f} {proposal.currency}."
+                )
+            elif not r_clean.endswith((".", "!", "?", '"', "'")):
+                r_clean += "."
+
+            explanation = f"{r_clean} {source_tag}".strip()
         else:
             explanation = (
                 f"I recommend the '{target_product.name}' from {target_product.merchant}. "

@@ -79,7 +79,7 @@ class GeminiClient:
             "contents": [{"parts": [{"text": prompt}]}],
             "generationConfig": {
                 "temperature": 0.1,
-                "maxOutputTokens": 800,
+                "maxOutputTokens": 1200,
             },
         }
 
@@ -90,7 +90,12 @@ class GeminiClient:
                     data = res.json()
                     candidates = data.get("candidates", [])
                     if candidates:
-                        text = candidates[0].get("content", {}).get("parts", [{}])[0].get("text", "")
+                        parts = candidates[0].get("content", {}).get("parts", [])
+                        text = "".join(
+                            p.get("text", "")
+                            for p in parts
+                            if isinstance(p, dict) and not p.get("thought", False)
+                        )
                         # Extract JSON block
                         json_match = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", text)
                         raw_json = json_match.group(1) if json_match else text.strip()
@@ -124,16 +129,16 @@ class GeminiClient:
             f"Merchant: {product_merchant}\n"
             f"Price: {unit_price:.2f} {currency}\n"
             f"Description: {product_desc}\n\n"
-            "Write a concise 2-sentence rationale explaining why this product satisfies the user's intent "
-            "and respects their financial budget ceiling invariants. Keep it professional and direct."
+            "Write a complete, professional 2-sentence rationale explaining why this product satisfies the user's intent "
+            "and respects their financial budget ceiling invariants. Always complete your thoughts and conclude with a period."
         )
 
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent?key={key}"
         payload = {
             "contents": [{"parts": [{"text": prompt}]}],
             "generationConfig": {
-                "temperature": 0.3,
-                "maxOutputTokens": 300,
+                "temperature": 0.2,
+                "maxOutputTokens": 1500,
             },
         }
 
@@ -144,8 +149,36 @@ class GeminiClient:
                     data = res.json()
                     candidates = data.get("candidates", [])
                     if candidates:
-                        text = candidates[0].get("content", {}).get("parts", [{}])[0].get("text", "")
+                        parts = candidates[0].get("content", {}).get("parts", [])
+                        text = "".join(
+                            p.get("text", "")
+                            for p in parts
+                            if isinstance(p, dict) and not p.get("thought", False)
+                        )
                         cleaned = text.strip().replace("\n", " ")
+                        cleaned = re.sub(r"\s+", " ", cleaned).strip()
+
+                        if len(cleaned) < 20:
+                            return None
+
+                        # Check for cut-off / dangling words at the end
+                        dangling = {
+                            "that", "and", "or", "but", "with", "for", "to", "at",
+                            "by", "of", "in", "is", "a", "an", "the", "which",
+                            "as", "from", "on", "it", "so", "because"
+                        }
+                        words = cleaned.split()
+                        last_word = words[-1].lower().strip(".,;:?!\"'") if words else ""
+
+                        if last_word in dangling:
+                            logger.warning(f"Detected cut-off LLM rationale: '{cleaned}'. Completing thought.")
+                            cleaned = (
+                                cleaned.rstrip(" ,;:-")
+                                + f" delivers dependable performance while strictly satisfying your spending limits at {unit_price:.0f} {currency}."
+                            )
+                        elif not cleaned.endswith((".", "!", "?", '"', "'")):
+                            cleaned += "."
+
                         return cleaned
         except Exception as e:
             logger.warning(f"Gemini recommendation generation failed: {e}")

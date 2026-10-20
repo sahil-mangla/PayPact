@@ -38,7 +38,7 @@ import {
 } from 'lucide-react';
 
 import { WordByWordText } from '../components/WordByWordText';
-import ParticleMorphOrb, { AiThinkingOrb, AiThinkingCard } from '../components/ui/ParticleMorphOrb';
+import ParticleMorphOrb, { AiThinkingOrb } from '../components/ui/ParticleMorphOrb';
 
 function getApiBaseUrl(): string {
   if (typeof window !== 'undefined') {
@@ -1397,14 +1397,16 @@ export default function Home() {
 
               {/* ─── Right Column: Proposal & Checkout ─── */}
               <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                {loading ? (
-                  <AiThinkingCard currentStage={pipelineStep} stageTitle="Evaluating Purchase Invariants & Policy" />
-                ) : !proposalRes ? (
+                {!proposalRes ? (
                   <div className="clean-card" style={{ padding: '40px 18px', textAlign: 'center', color: '#64748b', minHeight: '380px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
                     <CreditCard size={36} strokeWidth={1.3} style={{ margin: '0 auto 10px', color: '#cbd5e1' }} />
-                    <h3 style={{ fontSize: '0.96rem', color: '#0f172a', marginBottom: '4px' }}>No Proposal Generated Yet</h3>
+                    <h3 style={{ fontSize: '0.96rem', color: '#0f172a', marginBottom: '4px' }}>
+                      {loading ? 'Evaluating Catalogue & Rules...' : 'No Proposal Generated Yet'}
+                    </h3>
                     <p style={{ fontSize: '0.77rem', maxWidth: '290px', margin: '0 auto' }}>
-                      Enter your purchase goal on the left. The agent will find a matching item, compute total costs, and check your policy rules.
+                      {loading
+                        ? 'Agent is inspecting item specifications and validating spending policies...'
+                        : 'Enter your purchase goal on the left. The agent will find a matching item, compute total costs, and check your policy rules.'}
                     </p>
                   </div>
                 ) : (
@@ -1412,7 +1414,12 @@ export default function Home() {
                     initial={{ opacity: 0, y: 4 }}
                     animate={{ opacity: 1, y: 0 }}
                     className="clean-card"
-                    style={{ padding: '14px 16px' }}
+                    style={{
+                      padding: '14px 16px',
+                      opacity: loading ? 0.75 : 1,
+                      pointerEvents: loading ? 'none' : 'auto',
+                      transition: 'opacity 0.2s ease',
+                    }}
                   >
                     {/* Proposal Title & Status */}
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '8px' }}>
