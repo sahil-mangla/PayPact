@@ -404,6 +404,16 @@ export default function Home() {
     } catch (_) {}
   }, []);
 
+  // Auto-dismiss error notifications as a slidebar toast after 3 seconds
+  useEffect(() => {
+    if (errorMsg) {
+      const timer = setTimeout(() => {
+        setErrorMsg(null);
+      }, 3000);
+      return () => clearTimeout(timer);
+    }
+  }, [errorMsg]);
+
   const fetchHealth = async () => {
     try {
       const res = await apiFetch('/health');
@@ -1003,29 +1013,87 @@ export default function Home() {
             </div>
           </div>
 
-          {/* Error Message Banner */}
-          {errorMsg && (
-            <motion.div
-              initial={{ opacity: 0, y: -4 }}
-              animate={{ opacity: 1, y: 0 }}
-              style={{
-                padding: '8px 14px',
-                borderRadius: '8px',
-                background: '#fef2f2',
-                border: '1px solid #fecaca',
-                color: '#dc2626',
-                marginBottom: '10px',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '8px',
-                fontSize: '0.8rem',
-              }}
-            >
-              <AlertTriangle size={15} />
-              <span style={{ fontWeight: 500 }}>{errorMsg}</span>
-              <button onClick={() => setErrorMsg(null)} style={{ marginLeft: 'auto', background: 'none', border: 'none', color: '#dc2626', cursor: 'pointer', fontSize: '1rem', padding: '0 4px' }}>×</button>
-            </motion.div>
-          )}
+          {/* Floating Notification Slidebar / Toast (3s Auto-Dismiss Popup) */}
+          <AnimatePresence>
+            {errorMsg && (
+              <motion.div
+                initial={{ opacity: 0, y: -20, x: 20, scale: 0.95 }}
+                animate={{ opacity: 1, y: 0, x: 0, scale: 1 }}
+                exit={{ opacity: 0, y: -16, x: 16, scale: 0.95 }}
+                transition={{ type: 'spring', damping: 25, stiffness: 350 }}
+                style={{
+                  position: 'fixed',
+                  top: '20px',
+                  right: '20px',
+                  zIndex: 99999,
+                  maxWidth: '420px',
+                  minWidth: '320px',
+                  background: '#ffffff',
+                  border: '1px solid #fecaca',
+                  boxShadow: '0 10px 25px -5px rgba(220, 38, 38, 0.15), 0 8px 10px -6px rgba(0, 0, 0, 0.05)',
+                  borderRadius: '12px',
+                  overflow: 'hidden',
+                  display: 'flex',
+                  flexDirection: 'column',
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '12px 14px' }}>
+                  <div
+                    style={{
+                      width: '28px',
+                      height: '28px',
+                      borderRadius: '50%',
+                      background: '#fef2f2',
+                      border: '1px solid #fecaca',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      color: '#dc2626',
+                      flexShrink: 0,
+                    }}
+                  >
+                    <AlertTriangle size={15} />
+                  </div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#dc2626', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                      Security & Policy Notice
+                    </div>
+                    <div style={{ fontSize: '0.8rem', color: '#1e293b', fontWeight: 500, marginTop: '2px', wordBreak: 'break-word', lineHeight: 1.35 }}>
+                      {errorMsg}
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setErrorMsg(null)}
+                    style={{
+                      background: 'transparent',
+                      border: 'none',
+                      color: '#94a3b8',
+                      cursor: 'pointer',
+                      padding: '4px',
+                      borderRadius: '6px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                    }}
+                  >
+                    <X size={15} />
+                  </button>
+                </div>
+                {/* 3-second animated slidebar */}
+                <motion.div
+                  initial={{ width: '100%' }}
+                  animate={{ width: '0%' }}
+                  transition={{ duration: 3, ease: 'linear' }}
+                  style={{
+                    height: '3px',
+                    background: 'linear-gradient(90deg, #ef4444, #dc2626)',
+                    width: '100%',
+                  }}
+                />
+              </motion.div>
+            )}
+          </AnimatePresence>
 
           {/* ══════════════════════════════════════════════════════ */}
           {/* VIEW 1: PURCHASE FLOW                                 */}
