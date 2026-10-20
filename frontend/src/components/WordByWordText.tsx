@@ -15,7 +15,7 @@ export function WordByWordText({
   delay = 0,
 }: WordByWordTextProps) {
   // Extract provider tag if attached, e.g. [Powered by Gemini 2.5 Flash]
-  const tagMatch = text.match(/(.*?)(\[(?:Powered by|Inferred locally).*?\])\s*$/s);
+  const tagMatch = text.match(/([\s\S]*?)(\[(?:Powered by|Inferred locally)[\s\S]*?\])\s*$/);
   const mainText = tagMatch ? tagMatch[1].trim() : text;
   const providerTag = tagMatch ? tagMatch[2].trim().replace(/^\[|\]$/g, '') : null;
 
