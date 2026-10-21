@@ -2175,12 +2175,77 @@ export default function Home() {
                     }}
                   >
                     {verifierStatus === 'verifying' && (
-                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '6px 0' }}>
-                        <AiThinkingOrb
-                          size="md"
-                          text="Evaluating Cryptographic HMAC-SHA256 Signature..."
-                          subtext="Verifying canonical hash & non-repudiation ledger integrity"
-                        />
+                      <div style={{ padding: '8px 4px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            <div
+                              style={{
+                                width: '28px',
+                                height: '28px',
+                                borderRadius: '50%',
+                                background: '#dbeafe',
+                                border: '1px solid #bfdbfe',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                color: '#0284c7',
+                              }}
+                            >
+                              <ShieldCheck size={16} className="animate-spin" style={{ animationDuration: '3s' }} />
+                            </div>
+                            <div>
+                              <div style={{ fontSize: '0.82rem', fontWeight: 700, color: '#0369a1', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                <span>Verifying Cryptographic HMAC-SHA256 Signature</span>
+                                <span className="animate-pulse" style={{ display: 'inline-block', width: '6px', height: '6px', borderRadius: '50%', background: '#0284c7' }} />
+                              </div>
+                              <div style={{ fontSize: '0.72rem', color: '#64748b', marginTop: '1px' }}>
+                                Computing canonical payload digest & validating against cryptographic authority key...
+                              </div>
+                            </div>
+                          </div>
+                          <span
+                            style={{
+                              fontSize: '0.64rem',
+                              fontFamily: 'JetBrains Mono, monospace',
+                              padding: '2px 8px',
+                              borderRadius: '4px',
+                              background: '#ffffff',
+                              border: '1px solid #bfdbfe',
+                              color: '#0369a1',
+                              fontWeight: 600,
+                            }}
+                          >
+                            HMAC-SHA256
+                          </span>
+                        </div>
+
+                        {/* Animated Laser Scanning Line */}
+                        <div
+                          style={{
+                            width: '100%',
+                            height: '3px',
+                            background: '#e0f2fe',
+                            borderRadius: '9999px',
+                            overflow: 'hidden',
+                            position: 'relative',
+                            marginTop: '8px',
+                          }}
+                        >
+                          <motion.div
+                            initial={{ x: '-100%' }}
+                            animate={{ x: '100%' }}
+                            transition={{ repeat: Infinity, duration: 1.2, ease: 'easeInOut' }}
+                            style={{
+                              position: 'absolute',
+                              top: 0,
+                              left: 0,
+                              width: '45%',
+                              height: '100%',
+                              background: 'linear-gradient(90deg, transparent, #0284c7, #38bdf8, transparent)',
+                              borderRadius: '9999px',
+                            }}
+                          />
+                        </div>
                       </div>
                     )}
 
@@ -2396,8 +2461,16 @@ export default function Home() {
                       </div>
                     </>
                   ) : receiptVerificationState === 'verifying' ? (
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: '100%', padding: '4px 0' }}>
-                      <AiThinkingOrb size="sm" text="Evaluating Cryptographic Signature..." />
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px', width: '100%', padding: '6px 4px' }}>
+                      <RefreshCw size={16} className="animate-spin" color="#0284c7" />
+                      <div>
+                        <div style={{ fontSize: '0.84rem', fontWeight: 700, color: '#0369a1' }}>
+                          Verifying HMAC-SHA256 Signature...
+                        </div>
+                        <div style={{ fontSize: '0.72rem', color: '#64748b' }}>
+                          Recalculating SHA-256 canonical hash across all payload fields
+                        </div>
+                      </div>
                     </div>
                   ) : (
                     <>
