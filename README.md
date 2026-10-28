@@ -3,7 +3,8 @@
 > **PayPal AI Hackathon 2026 Submission**  
 > *Build What's Next with PayPal and AI*  
 > **Repository:** [github.com/sahil-mangla/PayPact](https://github.com/sahil-mangla/PayPact)  
-> **Video Demonstration:** Walkthrough script available in Section 9  
+> **Demo video (YouTube, under 3 min):** **TODO: add the public YouTube link before submitting**  
+> **Hosted demo:** **TODO: add the deployed URL, or delete this line and rely on the run instructions in Section 4**  
 > **License:** Apache 2.0  
 
 ---
@@ -126,8 +127,12 @@ We evaluated PayPact against two industry architectures across 7 controlled tran
 git clone https://github.com/sahil-mangla/PayPact.git
 cd PayPact
 
-# Optional: Configure real PayPal Sandbox credentials
-cp .env.example .env
+# Optional: Configure real PayPal Sandbox credentials (the backend loads backend/.env;
+# with no credentials it runs fully offline in mock mode)
+cp .env.example backend/.env
+
+# For the PayPal checkout buttons, put the same client ID in frontend/.env.local:
+#   NEXT_PUBLIC_PAYPAL_CLIENT_ID=<your sandbox client id>
 ```
 
 ### 2. Backend Setup & Test Suite
@@ -137,7 +142,7 @@ python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements-dev.txt
 
-# Run full backend test suite (61 tests covering policy, swarm, crypto verifier, edge cases)
+# Run full backend test suite (139 tests covering policy, swarm, crypto verifier, webhook verification, request matching, edge cases)
 pytest -v
 
 # Start FastAPI server on port 8000
@@ -149,7 +154,7 @@ python3 -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 cd ../frontend
 npm install --legacy-peer-deps
 
-# Run frontend Vitest test suite (12 tests covering dashboard, verifier, and UI components)
+# Run frontend Vitest test suite (16 tests covering dashboard, verifier, and UI components)
 npm test
 
 # Verify production build
@@ -172,7 +177,7 @@ cd ..
 
 The repository includes a GitHub Actions workflow [`.github/workflows/ci.yml`](.github/workflows/ci.yml) that executes on every push and pull request:
 
-- **Backend Matrix Job (`backend-tests`):** Evaluates Python 3.11 and 3.12 across all 61 unit, integration, and security tests.
+- **Backend Matrix Job (`backend-tests`):** Evaluates Python 3.11 and 3.12 across all 139 unit, integration, and security tests.
 - **Frontend Job (`frontend-tests`):** Executes Vitest React Testing Library component tests, verifies TypeScript typing, and compiles an optimized Next.js production bundle.
 - **Continuous Deployment Job (`deploy-render`):** Automatically triggers Render deployment webhooks upon merge to `main`.
 
@@ -186,12 +191,14 @@ PayPact is configured for deployment on [Render](https://render.com) using the I
 1. Push this repository to your GitHub account.
 2. In the Render Dashboard, click **New +** > **Blueprint**.
 3. Select your repository. Render will automatically detect [`render.yaml`](render.yaml) and provision two linked services:
-   - **`apil-backend` (Web Service, Python):** Runs FastAPI with Uvicorn.
-   - **`apil-frontend` (Web Service, Node):** Runs Next.js with optimized production server.
+   - **`paypact-backend` (Web Service, Python):** Runs FastAPI with Uvicorn.
+   - **`paypact-frontend` (Web Service, Node):** Runs Next.js with optimized production server.
 4. (Optional) Provide your PayPal Sandbox credentials in the Render Dashboard environment settings:
-   - `PAYPAL_MODE`: `mock` (default for zero-dependency evaluations) or `live_sandbox`
-   - `PAYPAL_CLIENT_ID`: Your PayPal Developer Sandbox client ID
-   - `PAYPAL_CLIENT_SECRET`: Your PayPal Developer Sandbox client secret
+   - `PAYPAL_CLIENT_ID` / `PAYPAL_CLIENT_SECRET`: Your PayPal Developer Sandbox credentials. With both set the backend talks to the live PayPal sandbox; without them it falls back to the offline mock (or force it with `PAYPAL_MOCK_MODE=true`).
+   - `NEXT_PUBLIC_PAYPAL_CLIENT_ID` (frontend): the same client ID, for the PayPal checkout buttons.
+   - `PAYPAL_WEBHOOK_ID`: Webhook ID from the PayPal dashboard. `POST /api/webhooks/paypal` verifies every delivery through PayPal's signature API and refuses all of them until this is set.
+   - `APIL_SIGNING_SECRET`: Generated automatically by the blueprint; signs the audit receipts.
+   - `GEMINI_API_KEY`: Enables Gemini for intent parsing and recommendation rationale (see Section 8).
 5. Click **Apply**. Both services will build, test, and deploy with HTTPS enabled.
 
 ---
@@ -229,9 +236,24 @@ The application provides a clean fintech interface with floating pill navigation
 
 ---
 
-## 8. Security Boundaries & Threat Model
+## 8. Tools & AI Used
+
+| Tool | Role in PayPact |
+|:---|:---|
+| **PayPal Orders v2 API (Sandbox)** | Creates and captures real sandbox orders with `PayPal-Request-Id` idempotency, reconciles ambiguous timeouts via `GET /v2/checkout/orders/{id}`, and verifies webhook deliveries through `verify-webhook-signature`. |
+| **PayPal JS SDK (`@paypal/react-paypal-js`)** | Buyer approval popup; the backend captures only after the pre-execution gate passes. |
+| **Google Gemini (`gemini-2.5-flash`)** | Turns a natural-language purchase goal into structured constraints (budget, category, currency) and writes the recommendation rationale. Used when `GEMINI_API_KEY` is set. |
+| **Ollama (`qwen2.5-coder:7b`)** | Local fallback for the same two jobs when Gemini is unavailable. |
+| **Deterministic parser** | Final fallback, so the app and the test suite run with no AI service at all. |
+
+The LLM only proposes. It never sees PayPal credentials and has no network path to PayPal; the deterministic policy engine decides what is executed.
+
+---
+
+## 9. Security Boundaries & Threat Model
 
 - **No Agent Payment Authority:** The LLM agent produces structured JSON proposals only. It has zero network access to PayPal APIs and zero knowledge of client secrets.
+- **Requests Are Verified, Not Guessed:** Before any proposal exists, a deterministic matcher (`backend/app/agent/requirements.py`) checks the item against what the request explicitly asks for: product type, route, travel class, one-way vs return, airline, quantity and nights. A request the catalogue cannot satisfy (a Mumbai flight, a business-class fare, a specific date, a train) is refused with the reason instead of being answered with the nearest item, and the LLM only explains a match that was already verified.
 - **Fail-Closed Arithmetic:** Line-item subtotals, taxes, and shipping are re-summed by the server. Any mathematical discrepancy immediately rejects the proposal.
 - **Tamper-Evident Ledger:** Every event is cryptographically linked:
   ```text
@@ -241,7 +263,7 @@ The application provides a clean fintech interface with floating pill navigation
 
 ---
 
-## 9. Submission Details & Video Demo Script
+## 10. Submission Details & Video Demo Script
 
 - **Event:** PayPal AI Hackathon 2026 — *Build What's Next with PayPal and AI*
 - **Public Repository:** [github.com/sahil-mangla/PayPact](https://github.com/sahil-mangla/PayPact)
@@ -254,6 +276,6 @@ The application provides a clean fintech interface with floating pill navigation
 
 ---
 
-## 10. License
+## 11. License
 
 This project is licensed under the Apache License 2.0. See [LICENSE](LICENSE) for details.

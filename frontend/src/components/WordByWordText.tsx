@@ -2,6 +2,7 @@
 
 import React from 'react';
 import { motion } from 'framer-motion';
+import { Sparkles } from 'lucide-react';
 
 export interface WordByWordTextProps {
   text: string;
@@ -56,7 +57,7 @@ export function WordByWordText({
               display: 'inline-flex',
               alignItems: 'center',
               gap: '4px',
-              fontSize: '0.66rem',
+              fontSize: '0.75rem',
               fontWeight: 600,
               color: '#4338ca',
               background: '#eef2ff',
@@ -65,7 +66,8 @@ export function WordByWordText({
               borderRadius: '10px',
             }}
           >
-            ✨ {providerTag}
+            <Sparkles size={12} aria-hidden="true" />
+            {providerTag}
           </span>
         </motion.div>
       )}

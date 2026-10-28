@@ -306,12 +306,12 @@ export default function ParticleMorphOrb({
 
 // ─── RewampUI Capsule Thinking / Evaluating Pill ───────────────────
 const DEFAULT_THINKING_MESSAGES = [
-  'evaluating policy invariants...',
-  'verifying budget ceilings...',
-  'querying catalogue for verified SKUs...',
-  'checking zero-drift constraints...',
-  'compiling cryptographic proposal...',
-  'deep thinking...',
+  'evaluating policy invariants…',
+  'verifying budget ceilings…',
+  'querying catalogue for verified SKUs…',
+  'checking zero-drift constraints…',
+  'compiling cryptographic proposal…',
+  'deep thinking…',
 ];
 
 export interface AiThinkingOrbProps {
@@ -376,7 +376,7 @@ export function AiThinkingOrb({
           {displayText}
         </span>
         {subtext && (
-          <span style={{ fontSize: '0.64rem', color: isLight ? '#64748b' : '#94a3b8', marginTop: '-1px' }}>
+          <span style={{ fontSize: '0.75rem', color: isLight ? '#526077' : '#94a3b8', marginTop: '-1px' }}>
             {subtext}
           </span>
         )}
@@ -458,7 +458,7 @@ export function AiThinkingCard({
           borderRadius: '9999px',
           background: 'rgba(255, 255, 255, 0.08)',
           border: '1px solid rgba(255, 255, 255, 0.12)',
-          fontSize: '0.68rem',
+          fontSize: '0.75rem',
           letterSpacing: '0.05em',
           fontWeight: 600,
           color: '#38bdf8',
@@ -542,9 +542,9 @@ export function AiThinkingCard({
                 }`,
                 borderRadius: '6px',
                 padding: '6px 4px',
-                fontSize: '0.64rem',
-                color: isActive ? '#38bdf8' : isDone ? '#34d399' : '#64748b',
-                transition: 'all 0.3s ease',
+                fontSize: '0.75rem',
+                color: isActive ? '#38bdf8' : isDone ? '#34d399' : '#526077',
+                transition: 'background-color 0.3s ease, border-color 0.3s ease, color 0.3s ease',
               }}
             >
               <div style={{ fontWeight: 700, marginBottom: '2px' }}>
