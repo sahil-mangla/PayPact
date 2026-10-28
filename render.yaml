@@ -13,21 +13,31 @@ services:
     envVars:
       - key: PYTHON_VERSION
         value: 3.11.9
-      - key: PAYPAL_MODE
-        value: mock
+      # Live PayPal sandbox when the two credentials below are set; falls back to
+      # the offline mock automatically when they are not.
+      - key: PAYPAL_MOCK_MODE
+        value: "false"
+      - key: PAYPAL_BASE_URL
+        value: https://api-m.sandbox.paypal.com
       - key: CORS_ORIGINS
         value: "*"
+      - key: FRONTEND_URL
+        value: https://paypact-frontend.onrender.com
       - key: PAYPAL_CLIENT_ID
         sync: false
       - key: PAYPAL_CLIENT_SECRET
         sync: false
+      # Required for POST /api/webhooks/paypal; without it the endpoint refuses deliveries
       - key: PAYPAL_WEBHOOK_ID
-        value: ""
+        sync: false
+      # Signs audit receipts (HMAC-SHA256); generated once by Render, never in source
+      - key: APIL_SIGNING_SECRET
+        generateValue: true
       - key: GEMINI_API_KEY
         sync: false
 
   # =========================================================================
-  # 2. PayPact Frontend Web App (Next.js 14 + Aceternity UI)
+  # 2. PayPact Frontend Web App (Next.js 14)
   # =========================================================================
   - type: web
     name: paypact-frontend
