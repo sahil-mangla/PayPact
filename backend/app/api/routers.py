@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
-from fastapi import APIRouter, HTTPException, Query
+import os
+from typing import List, Optional
+from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
 from app.agent.shopper_agent import ShopperAgent
@@ -362,8 +363,32 @@ async def verify_receipt_endpoint(receipt: SignedAuditReceipt):
 
 
 @router.post("/webhooks/paypal")
-async def handle_paypal_webhook(payload: Dict[str, Any]):
-    """Production PayPal Webhook Listener endpoint."""
+async def handle_paypal_webhook(request: Request):
+    """Production PayPal Webhook Listener endpoint.
+
+    Every delivery is verified against PayPal's signature API before it can touch
+    checkout state. With no PAYPAL_WEBHOOK_ID configured, or in mock mode, it is
+    rejected: use /webhooks/simulate for local demos.
+    """
+    webhook_id = os.getenv("PAYPAL_WEBHOOK_ID", "").strip()
+    if coordinator.paypal_client.mock_mode or not webhook_id:
+        raise HTTPException(
+            status_code=503,
+            detail="PayPal webhook verification is not configured (set PAYPAL_WEBHOOK_ID with live sandbox credentials).",
+        )
+    try:
+        payload = await request.json()
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Webhook body must be JSON.")
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="Webhook body must be an object.")
+
+    verified = await coordinator.paypal_client.verify_webhook_signature(
+        headers=request.headers, event=payload, webhook_id=webhook_id
+    )
+    if not verified:
+        raise HTTPException(status_code=401, detail="Invalid PayPal webhook signature.")
+
     event_type = payload.get("event_type", "")
     resource = payload.get("resource", {})
     summary = payload.get("summary")

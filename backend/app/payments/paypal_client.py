@@ -4,7 +4,7 @@ import base64
 import os
 import time
 import uuid
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Mapping, Optional
 import httpx
 from pydantic import BaseModel, Field
 
@@ -54,6 +54,11 @@ class PayPalClient:
             mock_mode
             if mock_mode is not None
             else (env_mock or not (self.client_id and self.client_secret))
+        )
+
+        # Where PayPal sends the buyer back after approval (the JS SDK flow uses callbacks)
+        self.frontend_url = os.getenv("FRONTEND_URL", "http://localhost:3000").rstrip(
+            "/"
         )
 
         self._access_token: Optional[str] = None
@@ -215,8 +220,8 @@ class PayPalClient:
                 }
             ],
             "application_context": {
-                "return_url": "https://localhost:3000/checkout/success",
-                "cancel_url": "https://localhost:3000/checkout/cancel",
+                "return_url": f"{self.frontend_url}/checkout/success",
+                "cancel_url": f"{self.frontend_url}/checkout/cancel",
                 "user_action": "PAY_NOW",
             },
         }
@@ -336,6 +341,55 @@ class PayPalClient:
             raw_response=data,
             is_mock=False,
         )
+
+    async def verify_webhook_signature(
+        self,
+        headers: Mapping[str, str],
+        event: Dict[str, Any],
+        webhook_id: str,
+    ) -> bool:
+        """Verify a webhook delivery through PayPal's verify-webhook-signature API.
+
+        Fails closed: any missing transmission header, rejected call or non-SUCCESS
+        verdict returns False. Mock mode has no PayPal to ask, so it never verifies.
+        """
+        if self.mock_mode or not webhook_id:
+            return False
+
+        # Starlette lower-cases incoming header names
+        lowered = {k.lower(): v for k, v in headers.items()}
+        fields = {
+            "auth_algo": "paypal-auth-algo",
+            "cert_url": "paypal-cert-url",
+            "transmission_id": "paypal-transmission-id",
+            "transmission_sig": "paypal-transmission-sig",
+            "transmission_time": "paypal-transmission-time",
+        }
+        payload: Dict[str, Any] = {}
+        for field, header in fields.items():
+            value = lowered.get(header)
+            if not value:
+                return False
+            payload[field] = value
+        payload["webhook_id"] = webhook_id
+        payload["webhook_event"] = event
+
+        token = await self.get_access_token()
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.post(
+                    f"{self.base_url}/v1/notifications/verify-webhook-signature",
+                    headers={
+                        "Authorization": f"Bearer {token}",
+                        "Content-Type": "application/json",
+                    },
+                    json=payload,
+                )
+            if resp.status_code >= 400:
+                return False
+            return resp.json().get("verification_status") == "SUCCESS"
+        except (httpx.HTTPError, ValueError):
+            return False
 
     async def get_order_details(self, order_id: str) -> PayPalOrderResponse:
         """Fetch current order details for post-timeout state reconciliation."""
