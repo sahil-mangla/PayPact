@@ -11,7 +11,7 @@ import json
 import logging
 import os
 import re
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 import httpx
 
 logger = logging.getLogger(__name__)
@@ -33,7 +33,11 @@ class GeminiClient:
         """Check if Gemini API key is configured and can reach Google Generative Language API."""
         key = cls.get_api_key()
         if not key:
-            return {"available": False, "reason": "No GEMINI_API_KEY set", "model": GEMINI_MODEL}
+            return {
+                "available": False,
+                "reason": "No GEMINI_API_KEY set",
+                "model": GEMINI_MODEL,
+            }
 
         try:
             url = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}?key={key}"
@@ -116,6 +120,8 @@ class GeminiClient:
         unit_price: float,
         currency: str,
         product_desc: str,
+        verified_facts: Optional[List[str]] = None,
+        quantity: int = 1,
     ) -> Optional[str]:
         """Ask Gemini model to produce natural agent reasoning."""
         key = cls.get_api_key()
@@ -128,9 +134,13 @@ class GeminiClient:
             f"Selected product: {product_name}\n"
             f"Merchant: {product_merchant}\n"
             f"Price: {unit_price:.2f} {currency}\n"
-            f"Description: {product_desc}\n\n"
-            "Write a complete, professional 2-sentence rationale explaining why this product satisfies the user's intent "
-            "and respects their financial budget ceiling invariants. Always complete your thoughts and conclude with a period."
+            f"Description: {product_desc}\n"
+            f"Quantity: {quantity}\n"
+            f"Requirements the system verified: {'; '.join(verified_facts or []) or 'none stated'}\n\n"
+            "Write a complete, professional 2-sentence rationale explaining how this product fits the user's request "
+            "and their financial budget ceiling. State only facts that appear in the description or the verified list above. "
+            "Never claim a route, date, class, feature or any requirement that is not listed there. "
+            "Always complete your thoughts and conclude with a period."
         )
 
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent?key={key}"
@@ -163,15 +173,38 @@ class GeminiClient:
 
                         # Check for cut-off / dangling words at the end
                         dangling = {
-                            "that", "and", "or", "but", "with", "for", "to", "at",
-                            "by", "of", "in", "is", "a", "an", "the", "which",
-                            "as", "from", "on", "it", "so", "because"
+                            "that",
+                            "and",
+                            "or",
+                            "but",
+                            "with",
+                            "for",
+                            "to",
+                            "at",
+                            "by",
+                            "of",
+                            "in",
+                            "is",
+                            "a",
+                            "an",
+                            "the",
+                            "which",
+                            "as",
+                            "from",
+                            "on",
+                            "it",
+                            "so",
+                            "because",
                         }
                         words = cleaned.split()
-                        last_word = words[-1].lower().strip(".,;:?!\"'") if words else ""
+                        last_word = (
+                            words[-1].lower().strip(".,;:?!\"'") if words else ""
+                        )
 
                         if last_word in dangling:
-                            logger.warning(f"Detected cut-off LLM rationale: '{cleaned}'. Completing thought.")
+                            logger.warning(
+                                f"Detected cut-off LLM rationale: '{cleaned}'. Completing thought."
+                            )
                             cleaned = (
                                 cleaned.rstrip(" ,;:-")
                                 + f" delivers dependable performance while strictly satisfying your spending limits at {unit_price:.0f} {currency}."

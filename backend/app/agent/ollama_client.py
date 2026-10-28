@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 import logging
 import os
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 import httpx
 
 logger = logging.getLogger(__name__)
@@ -96,13 +96,19 @@ class OllamaClient:
         unit_price: float,
         currency: str,
         product_desc: str,
+        verified_facts: Optional[List[str]] = None,
+        quantity: int = 1,
     ) -> Optional[str]:
         """Ask local Ollama model to produce natural agent reasoning."""
         prompt = (
             f"You are a helpful AI procurement agent. The user wants: '{user_prompt}'.\n"
             f"You selected '{product_name}' priced at {unit_price:.2f} {currency} from '{product_merchant}'.\n"
-            f"Product specs: {product_desc}.\n\n"
-            "Write a concise, professional 2-sentence recommendation to the user explaining why this product satisfies their budget and requirements."
+            f"Product specs: {product_desc}.\n"
+            f"Quantity: {quantity}.\n"
+            f"Requirements the system verified: {'; '.join(verified_facts or []) or 'none stated'}.\n\n"
+            "Write a concise, professional 2-sentence recommendation explaining how this product fits the request and budget. "
+            "State only facts that appear in the product specs or the verified list above. Never claim a route, date, class, "
+            "feature or any requirement that is not listed there."
         )
 
         try:

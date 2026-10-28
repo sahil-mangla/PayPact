@@ -11,3 +11,15 @@ def mock_paypal_for_tests():
     coordinator.paypal_client.mock_mode = True
     yield
     coordinator.paypal_client.mock_mode = prev_mode
+
+
+@pytest.fixture(autouse=True)
+def no_live_llm(monkeypatch):
+    """Keep the suite hermetic: no test may depend on a local Ollama model or a Gemini key.
+
+    Live model output is non-deterministic (the same prompt was labelled both
+    "office supplies" and "computer accessories"), so tests that exercise the agent run
+    on the deterministic parser. Tests that need an LLM response mock the client.
+    """
+    monkeypatch.setenv("GEMINI_API_KEY", "")
+    monkeypatch.setattr("app.agent.ollama_client.OLLAMA_BASE_URL", "http://127.0.0.1:9")
