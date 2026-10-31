@@ -180,7 +180,7 @@ The sandbox does not support INR, so INR amounts are converted to USD at a fixed
 | `APIL_SIGNING_SECRET` | random per process | HMAC key for audit receipts. Set it to keep receipts verifiable across restarts. |
 | `GEMINI_API_KEY` | unset | Enables Gemini for intent parsing and the recommendation rationale. |
 | `GEMINI_DAILY_CALL_LIMIT` | `500` | Daily cap on Gemini calls; past it the app falls back to local or deterministic parsing. `0` disables the cap. |
-| `LLM_RATE_LIMIT_PER_MINUTE` | `20` | Per-client limit on the two endpoints that call an LLM. `0` disables it. |
+| `LLM_RATE_LIMIT_PER_MINUTE` | `30` | Per-client limit on the two endpoints that call an LLM. `0` disables it. |
 | `ENABLE_WEBHOOK_SIMULATION` | unset | `/api/webhooks/simulate` always works in mock mode; against live PayPal it is off unless this is `true`. |
 | `INR_TO_USD_RATE` | `83` | INR per USD for the sandbox conversion. |
 | `CORS_ORIGINS` | localhost origins | Comma-separated allowed origins, or `*`. |

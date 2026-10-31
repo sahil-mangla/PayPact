@@ -44,9 +44,9 @@ class SlidingWindowLimiter:
 
 def _env_limit() -> int:
     try:
-        return int(os.getenv("LLM_RATE_LIMIT_PER_MINUTE", "20"))
+        return int(os.getenv("LLM_RATE_LIMIT_PER_MINUTE", "30"))
     except ValueError:
-        return 20
+        return 30
 
 
 llm_limiter = SlidingWindowLimiter(_env_limit)

@@ -8,7 +8,9 @@ services:
     rootDir: backend
     plan: free
     buildCommand: pip install --upgrade pip && pip install -r requirements.txt
-    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    # Behind Render's proxy the real client address is in X-Forwarded-For. Without trusting it,
+    # every visitor shares the proxy's address and therefore one rate-limit bucket.
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT --proxy-headers --forwarded-allow-ips='*'
     healthCheckPath: /api/health
     envVars:
       - key: PYTHON_VERSION
