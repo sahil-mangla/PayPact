@@ -209,3 +209,61 @@ describe('Attack simulator chips run in one click', () => {
     });
   });
 });
+
+describe('After payment: refunds, disputes and the quota panel', () => {
+  const calls: string[] = [];
+
+  beforeEach(() => {
+    calls.length = 0;
+    localStorage.clear();
+    let policy = { ...MOCK_POLICY };
+    global.fetch = vi.fn().mockImplementation((url: string, options?: any) => {
+      calls.push(`${options?.method || 'GET'} ${url}`);
+      const json = (body: any) => Promise.resolve({ ok: true, json: () => Promise.resolve(body) });
+      if (url.includes('/health')) return json({ status: 'healthy', paypal_mode: 'mock', ollama: {} });
+      if (url.includes('/authorizations/parse-intent') || (url.includes('/authorizations') && options?.method === 'POST')) {
+        return json(policy);
+      }
+      if (url.match(/\/authorizations\/[^/]+$/)) return json({ ...policy, spent_total: 3899 });
+      if (url.includes('/proposals')) return json(MOCK_PROPOSAL_RES);
+      if (url.includes('/execute')) {
+        return json({ session: { checkout_id: 'chk_flow_test_01', state: 'PAID', paypal_order_id: 'MOCK-ORD-1', paypal_capture_id: 'MOCK-CAP-1', proposal: MOCK_PROPOSAL_RES.proposal } });
+      }
+      if (url.includes('/webhooks/simulate')) {
+        const type = JSON.parse(options.body).event_type;
+        return json({ session: { checkout_id: 'chk_flow_test_01', state: type.includes('DISPUTE') ? 'DISPUTED' : 'REFUNDED', paypal_order_id: 'MOCK-ORD-1', paypal_capture_id: 'MOCK-CAP-1', proposal: MOCK_PROPOSAL_RES.proposal } });
+      }
+      return json([]);
+    });
+  });
+
+  async function payThenSimulate(label: string) {
+    render(<Home />);
+    fireEvent.click(screen.getByText('Generate Proposal & Check Rules'));
+    fireEvent.click(await screen.findByText('Execute Authorized Payment'));
+    fireEvent.click(await screen.findByText(label));
+  }
+
+  it('keeps the settled card and shows Refunded instead of offering to pay again', async () => {
+    await payThenSimulate('Simulate Refund Webhook');
+    expect(await screen.findByText('Payment Refunded')).toBeInTheDocument();
+    expect(screen.queryByText('Execute Authorized Payment')).not.toBeInTheDocument();
+    expect(screen.getByText(/Webhook confirmed/i)).toBeInTheDocument();
+  });
+
+  it('keeps the settled card and shows Disputed for a dispute', async () => {
+    await payThenSimulate('Simulate Dispute Webhook');
+    expect(await screen.findByText('Payment Disputed')).toBeInTheDocument();
+    expect(screen.queryByText('Execute Authorized Payment')).not.toBeInTheDocument();
+  });
+
+  it('reloads the policy after a payment so the quota panel is not stale', async () => {
+    render(<Home />);
+    fireEvent.click(screen.getByText('Generate Proposal & Check Rules'));
+    fireEvent.click(await screen.findByText('Execute Authorized Payment'));
+    await screen.findByText('Payment Settled Successfully');
+    await waitFor(() => {
+      expect(calls.some((c) => /^GET .*\/authorizations\/pol_/.test(c))).toBe(true);
+    });
+  });
+});

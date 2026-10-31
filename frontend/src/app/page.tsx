@@ -487,6 +487,25 @@ export default function Home() {
     }
   };
 
+  // Spend changes when a payment settles or is refunded, so reload the policy for the quota panel.
+  useEffect(() => {
+    const state = checkoutSession?.state;
+    const policyId = policy?.policy_id;
+    if (!policyId || !(state === 'PAID' || state === 'REFUNDED' || state === 'DISPUTED')) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await apiFetch(`/authorizations/${policyId}`);
+        if (res.ok && !cancelled) setPolicy(await res.json());
+      } catch (_) {}
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // Only a change of settlement state should reload it, not every policy update.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [checkoutSession?.state]);
+
   const handleSimulateWebhook = async (checkoutId: string, eventType: string) => {
     try {
       setWebhookStatus(`Sending PayPal webhook: ${eventType}...`);
@@ -1597,7 +1616,7 @@ export default function Home() {
                         </motion.button>
                       )}
 
-                      {(proposalRes.state === 'AUTHORIZED' || (checkoutSession?.state === 'AUTHORIZED')) && !checkoutSession?.state?.match(/PAID|POLICY_REJECTED|FAILED/) && (
+                      {(proposalRes.state === 'AUTHORIZED' || (checkoutSession?.state === 'AUTHORIZED')) && !checkoutSession?.state?.match(/PAID|REFUNDED|DISPUTED|POLICY_REJECTED|FAILED/) && (
                         <>
                           {simulateDrift !== 'none' ? (
                             <motion.button
@@ -1655,7 +1674,7 @@ export default function Home() {
                     </div>
 
                     {/* Payment Success Card */}
-                    {checkoutSession?.state === 'PAID' && (
+                    {(checkoutSession?.state === 'PAID' || checkoutSession?.state === 'REFUNDED' || checkoutSession?.state === 'DISPUTED') && (
                       <motion.div
                         initial={{ opacity: 0, scale: 0.98 }}
                         animate={{ opacity: 1, scale: 1 }}
@@ -1665,15 +1684,26 @@ export default function Home() {
                           <div style={{ display: 'flex', alignItems: 'center', gap: '5px', color: '#047857' }}>
                             <CheckCircle2 size={15} />
                             <strong style={{ fontSize: '0.83rem' }}>
-                              {isLiveSandbox ? 'Payment Completed on PayPal Sandbox' : 'Payment Settled Successfully'}
+                              {checkoutSession.state === 'REFUNDED'
+                                ? 'Payment Refunded'
+                                : checkoutSession.state === 'DISPUTED'
+                                  ? 'Payment Disputed'
+                                  : isLiveSandbox
+                                    ? 'Payment Completed on PayPal Sandbox'
+                                    : 'Payment Settled Successfully'}
                             </strong>
                           </div>
-                          <span className="badge badge-allow" style={{ fontSize: '0.75rem', padding: '1px 5px' }}>Completed</span>
+                          <span
+                            className={checkoutSession.state === 'PAID' ? 'badge badge-allow' : 'badge badge-reject'}
+                            style={{ fontSize: '0.75rem', padding: '1px 5px' }}
+                          >
+                            {checkoutSession.state === 'PAID' ? 'Completed' : checkoutSession.state === 'REFUNDED' ? 'Refunded' : 'Disputed'}
+                          </span>
                         </div>
                         <div style={{ fontSize: '0.75rem', color: '#334155', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '3px' }}>
                           <div>Order ID: <code style={{ color: '#0f172a' }}>{checkoutSession.paypal_order_id}</code></div>
                           <div>Capture ID: <code style={{ color: '#0f172a' }}>{checkoutSession.paypal_capture_id}</code></div>
-                          <div>Status: <strong style={{ color: '#047857' }}>COMPLETED</strong></div>
+                          <div>Status: <strong style={{ color: checkoutSession.state === 'PAID' ? '#047857' : '#b45309' }}>{checkoutSession.state === 'PAID' ? 'COMPLETED' : checkoutSession.state}</strong></div>
                           <div>Total Charged: <strong style={{ color: '#0f172a' }}>₹{proposalRes.proposal?.total_amount?.toLocaleString()}</strong></div>
                         </div>
 
@@ -1702,6 +1732,7 @@ export default function Home() {
                           <div style={{ fontSize: '0.75rem', color: '#475569', fontWeight: 600, marginBottom: '3px' }}>
                             Test Asynchronous PayPal Events:
                           </div>
+                          {checkoutSession.state === 'PAID' && (
                           <div style={{ display: 'flex', gap: '5px' }}>
                             <button
                               type="button"
@@ -1720,6 +1751,7 @@ export default function Home() {
                               Simulate Dispute Webhook
                             </button>
                           </div>
+                          )}
                           {webhookStatus && (
                             <div style={{ marginTop: '5px', fontSize: '0.75rem', color: '#0070ba', background: '#eff6ff', border: '1px solid #bfdbfe', padding: '3px 6px', borderRadius: '9999px' }}>
                               {webhookStatus}
