@@ -789,3 +789,16 @@ def test_client_refuses_to_run_against_live_paypal_by_accident(monkeypatch):
     PayPalClient(
         client_id="a", client_secret="b", base_url="https://api-m.paypal.com", mock_mode=False
     )
+
+
+@pytest.mark.asyncio
+async def test_agent_quota_remaining_budget_is_serialized_for_the_ui():
+    async with _client() as client:
+        intent = (
+            await client.post(
+                "/api/authorizations/parse-intent", json={"prompt": AUTO_PROMPT}
+            )
+        ).json()
+        policy = (await client.post("/api/authorizations", json=intent)).json()
+        quota = policy["agent_quotas"]["agent_hardware"]
+        assert quota["remaining_budget"] == quota["allocated_budget"] - quota["spent_budget"]
