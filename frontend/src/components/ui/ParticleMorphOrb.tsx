@@ -15,7 +15,8 @@ uniform float uTime;
 varying float vFresnel;
 varying float vAlpha;
 
-// 3D Simplex noise
+// 3D Simplex noise: the compact snoise from the webgl-noise library by Ashima Arts and
+// Ian McEwan (MIT License). See THIRD_PARTY_NOTICES.md.
 vec4 permute(vec4 x){return mod(((x*34.0)+1.0)*x, 289.0);}
 vec4 taylorInvSqrt(vec4 r){return 1.79284291400159 - 0.85373472095314 * r;}
 float snoise(vec3 v){
