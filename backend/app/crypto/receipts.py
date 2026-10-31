@@ -11,6 +11,7 @@ import hashlib
 import hmac
 import json
 import os
+import secrets
 import uuid
 from datetime import datetime, timezone
 from typing import Optional
@@ -18,9 +19,9 @@ from typing import Optional
 from app.models.schemas import SignedAuditReceipt
 
 
-APIL_SIGNING_SECRET = os.getenv(
-    "APIL_SIGNING_SECRET", "apil_master_cryptographic_audit_signing_secret_2026"
-)
+# Never ship a known default: without APIL_SIGNING_SECRET each process signs with its
+# own random key, so receipts verify only until restart. Set the variable for stable ones.
+APIL_SIGNING_SECRET = os.getenv("APIL_SIGNING_SECRET") or secrets.token_hex(32)
 SIGNER_IDENTITY = "APIL-Ledger-Authority-v1.0"
 
 

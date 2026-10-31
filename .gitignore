@@ -59,3 +59,8 @@ brag-output/
 docs/DEVPOST_SUBMISSION.md
 docs/HANDOVER_CONTEXT.md
 
+
+# Agent tooling and Hallmark working files
+.agents/
+.hallmark/
+skills-lock.json

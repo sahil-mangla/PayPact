@@ -1,5 +1,8 @@
 import asyncio
+import math
+import re
 import uuid
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional
 from pydantic import BaseModel, Field
 
@@ -18,6 +21,22 @@ from app.payments.paypal_client import PayPalClient, PayPalOrderResponse
 from app.policy.engine import DeterministicPolicyEngine
 
 
+class CheckoutNotFoundError(ValueError):
+    """No checkout exists with the given id (the API maps this to a 404)."""
+
+
+# PayPal order ids are short alphanumeric tokens; anything else never reaches a PayPal URL.
+ORDER_ID_RE = re.compile(r"[A-Za-z0-9-]{1,64}")
+
+# A checkout that started paying but never settled holds its budget for this long.
+PENDING_RESERVATION_TTL = timedelta(minutes=15)
+_PENDING_STATES = (
+    TransactionState.PAYMENT_PENDING,
+    TransactionState.CHECKOUT_CREATED,
+    TransactionState.RECONCILIATION_REQUIRED,
+)
+
+
 class CheckoutSession(BaseModel):
     checkout_id: str
     policy_id: str
@@ -31,6 +50,8 @@ class CheckoutSession(BaseModel):
     idempotency_key: str = Field(default_factory=lambda: str(uuid.uuid4()))
     failure_reason: Optional[str] = None
     reconciliation_data: Optional[Dict] = None
+    refunded_total: float = 0.0
+    pending_since: Optional[datetime] = None
 
 
 class TransactionCoordinator:
@@ -47,11 +68,80 @@ class TransactionCoordinator:
         self._policies: Dict[str, AuthorizationPolicy] = {}
         self._idempotency_map: Dict[str, str] = {}  # idempotency_key -> checkout_id
         self._execution_locks: Dict[str, asyncio.Lock] = {}
+        # Webhook event ids already applied (insertion-ordered, bounded) so redelivery is a no-op.
+        self._seen_webhook_events: Dict[str, None] = {}
 
     def _get_execution_lock(self, checkout_id: str) -> asyncio.Lock:
         if checkout_id not in self._execution_locks:
             self._execution_locks[checkout_id] = asyncio.Lock()
         return self._execution_locks[checkout_id]
+
+    def _reserve_budget(
+        self, session: CheckoutSession, policy: AuthorizationPolicy
+    ) -> Optional[str]:
+        """Reserve this checkout's amount, or return why the budget cannot cover it.
+
+        Spend is only recorded once PayPal captures, so two checkouts that each fit the budget
+        could otherwise both start paying. Checkouts already mid-payment count as spent.
+        Runs without awaiting, so check-and-reserve is atomic on the event loop.
+        """
+        now = datetime.now(timezone.utc)
+        agent_id = session.proposal.agent_id
+        pending_total = 0.0
+        pending_agent = 0.0
+        for other in self._sessions.values():
+            if (
+                other.checkout_id == session.checkout_id
+                or other.policy_id != session.policy_id
+                or other.state not in _PENDING_STATES
+                or other.pending_since is None
+            ):
+                continue
+            # An abandoned popup stops holding budget after a while. A payment whose outcome
+            # is unknown may already have moved money, so it holds its budget until settled.
+            if (
+                other.state != TransactionState.RECONCILIATION_REQUIRED
+                and now - other.pending_since > PENDING_RESERVATION_TTL
+            ):
+                continue
+            pending_total += other.proposal.total_amount
+            if agent_id and other.proposal.agent_id == agent_id:
+                pending_agent += other.proposal.total_amount
+
+        amount = session.proposal.total_amount
+        remaining = round(policy.maximum_total - policy.spent_total - pending_total, 2)
+        if amount > remaining:
+            return (
+                f"Exceeds remaining budget once pending checkouts are counted "
+                f"({amount:.2f} > {max(remaining, 0.0):.2f})."
+            )
+        quota = (policy.agent_quotas or {}).get(agent_id) if agent_id else None
+        if quota is not None:
+            quota_left = round(quota.remaining_budget - pending_agent, 2)
+            if amount > quota_left:
+                return (
+                    f"Exceeds agent '{quota.agent_name}' quota once pending checkouts are "
+                    f"counted ({amount:.2f} > {max(quota_left, 0.0):.2f})."
+                )
+
+        session.state = TransactionState.PAYMENT_PENDING
+        session.pending_since = now
+        return None
+
+    def _block_for_budget(
+        self, session: CheckoutSession, policy: AuthorizationPolicy, reason: str
+    ) -> CheckoutSession:
+        session.state = TransactionState.POLICY_REJECTED
+        session.failure_reason = reason
+        self.audit_ledger.record_event(
+            event_type="PRE_EXECUTION_BLOCKED",
+            checkout_id=session.checkout_id,
+            policy_version=policy.version,
+            proposal_fingerprint=session.proposal.proposal_fingerprint,
+            decision=PolicyDecisionType.REJECT.value,
+            reason=reason,
+        )
+        return session
 
     def register_policy(self, policy: AuthorizationPolicy) -> AuthorizationPolicy:
         self._policies[policy.policy_id] = policy
@@ -128,6 +218,9 @@ class TransactionCoordinator:
             policy_version=policy.version,
             proposal=proposal,
             state=state,
+            # An auto-authorized checkout is bound to the exact proposal the policy allowed,
+            # so later drift is caught the same way as on a user-approved one.
+            approved_fingerprint=fp if state == TransactionState.AUTHORIZED else None,
             failure_reason=eval_result.primary_reason
             if state == TransactionState.POLICY_REJECTED
             else None,
@@ -155,14 +248,14 @@ class TransactionCoordinator:
         """User explicitly approves the proposal."""
         session = self._sessions.get(checkout_id)
         if not session:
-            raise ValueError(f"Checkout '{checkout_id}' not found.")
+            raise CheckoutNotFoundError(f"Checkout '{checkout_id}' not found.")
 
         if session.state not in (
             TransactionState.AWAITING_APPROVAL,
             TransactionState.AUTHORIZED,
         ):
             raise ValueError(
-                f"Cannot approve checkout in state '{session.state}'. Must be AWAITING_APPROVAL or AUTHORIZED."
+                f"Cannot approve checkout in state '{session.state.value}'. Must be AWAITING_APPROVAL or AUTHORIZED."
             )
 
         fp = session.proposal.proposal_fingerprint or compute_proposal_fingerprint(
@@ -200,7 +293,7 @@ class TransactionCoordinator:
         """Execute checkout with Pre-Execution Lifecycle Gate and duplicate protection."""
         session = self._sessions.get(checkout_id)
         if not session:
-            raise ValueError(f"Checkout '{checkout_id}' not found.")
+            raise CheckoutNotFoundError(f"Checkout '{checkout_id}' not found.")
 
         lock = self._get_execution_lock(checkout_id)
         async with lock:
@@ -216,7 +309,7 @@ class TransactionCoordinator:
             # Verify state is AUTHORIZED
             if session.state != TransactionState.AUTHORIZED:
                 raise ValueError(
-                    f"Cannot execute checkout in state '{session.state}'. Must be AUTHORIZED."
+                    f"Cannot execute checkout in state '{session.state.value}'. Must be AUTHORIZED."
                 )
 
             # 2. Pre-Execution Invariant Gate
@@ -234,6 +327,7 @@ class TransactionCoordinator:
                 proposal=live_proposal,
                 policy=policy,
                 approved_fingerprint=session.approved_fingerprint,
+                approval_granted=session.approval_record is not None,
             )
 
             if reval.decision != PolicyDecisionType.ALLOW:
@@ -249,6 +343,14 @@ class TransactionCoordinator:
                     reason=reval.primary_reason,
                 )
                 return session
+
+            # The gate only judges the live copy. Charge exactly what was proposed and
+            # approved, never data that came in with the execute request.
+            live_proposal = session.proposal
+
+            reason = self._reserve_budget(session, policy)
+            if reason:
+                return self._block_for_budget(session, policy, reason)
 
             # 3. Create PayPal Order
             req_id = idempotency_key or session.idempotency_key
@@ -329,16 +431,24 @@ class TransactionCoordinator:
         Does NOT capture — buyer must approve via JS SDK popup first."""
         session = self._sessions.get(checkout_id)
         if not session:
-            raise ValueError(f"Checkout '{checkout_id}' not found.")
+            raise CheckoutNotFoundError(f"Checkout '{checkout_id}' not found.")
 
         lock = self._get_execution_lock(checkout_id)
         async with lock:
             if session.state == TransactionState.PAID:
                 return session
 
+            # The buyer closed the PayPal popup and came back: hand back the same order
+            # instead of failing, or creating a second one for the same checkout.
+            if (
+                session.state == TransactionState.CHECKOUT_CREATED
+                and session.paypal_order_id
+            ):
+                return session
+
             if session.state != TransactionState.AUTHORIZED:
                 raise ValueError(
-                    f"Cannot execute checkout in state '{session.state}'. Must be AUTHORIZED."
+                    f"Cannot execute checkout in state '{session.state.value}'. Must be AUTHORIZED."
                 )
 
             policy = self._policies.get(session.policy_id)
@@ -354,6 +464,7 @@ class TransactionCoordinator:
                 proposal=live_proposal,
                 policy=policy,
                 approved_fingerprint=session.approved_fingerprint,
+                approval_granted=session.approval_record is not None,
             )
 
             if reval.decision != PolicyDecisionType.ALLOW:
@@ -369,6 +480,10 @@ class TransactionCoordinator:
                 )
                 return session
 
+            # The gate only judges the live copy. Charge exactly what was proposed and
+            # approved, never data that came in with the execute request.
+            live_proposal = session.proposal
+
             # Check timeout simulation for live sandbox
             if simulate_timeout:
                 session.state = TransactionState.RECONCILIATION_REQUIRED
@@ -381,6 +496,10 @@ class TransactionCoordinator:
                     reason="Timeout during payment creation/capture. Marked for reconciliation without blind retry.",
                 )
                 return session
+
+            reason = self._reserve_budget(session, policy)
+            if reason:
+                return self._block_for_budget(session, policy, reason)
 
             # Create PayPal order (no capture yet)
             req_id = session.idempotency_key
@@ -404,6 +523,75 @@ class TransactionCoordinator:
 
             return session
 
+    def _settle_capture(
+        self,
+        session: CheckoutSession,
+        resp: PayPalOrderResponse,
+        *,
+        success_event: str,
+        success_reason: str,
+    ) -> CheckoutSession:
+        """Turn what PayPal reports about an order into a checkout state.
+
+        Capture and reconcile share this, so neither can record a payment the other would
+        refuse: the order and the capture inside it must both be COMPLETED, and the amount and
+        currency must be what was approved.
+        """
+        checkout_id = session.checkout_id
+        if resp.status != "COMPLETED":
+            session.state = TransactionState.FAILED
+            session.failure_reason = f"PayPal returned status: {resp.status}"
+            return session
+
+        if resp.capture_status and resp.capture_status != "COMPLETED":
+            session.paypal_capture_id = resp.capture_id
+            if resp.capture_status == "PENDING":
+                # PayPal is still holding the funds; it may settle or be reversed later.
+                session.state = TransactionState.RECONCILIATION_REQUIRED
+                session.failure_reason = "PayPal capture is PENDING; reconcile to check again."
+            else:
+                session.state = TransactionState.FAILED
+                session.failure_reason = (
+                    f"PayPal capture was {resp.capture_status}; no payment was taken."
+                )
+            return session
+
+        expected_currency, expected_amount = self.paypal_client.expected_charge(
+            session.proposal
+        )
+        if resp.amount_reported and (
+            resp.currency != expected_currency
+            or abs(resp.total_amount - expected_amount) > 0.005
+        ):
+            # The money moved but not as approved: never record it as a clean payment.
+            session.state = TransactionState.FAILED
+            session.paypal_capture_id = resp.capture_id
+            session.failure_reason = (
+                f"Captured {resp.total_amount} {resp.currency} "
+                f"does not match the approved {expected_amount} {expected_currency}. "
+                f"Capture {resp.capture_id} needs manual review in PayPal."
+            )
+            self.audit_ledger.record_event(
+                event_type="PAYMENT_AMOUNT_MISMATCH",
+                checkout_id=checkout_id,
+                reason=session.failure_reason,
+            )
+            return session
+
+        session.state = TransactionState.PAID
+        session.paypal_capture_id = resp.capture_id
+        self._record_spend(
+            policy_id=session.policy_id,
+            amount=session.proposal.total_amount,
+            agent_id=session.proposal.agent_id,
+        )
+        self.audit_ledger.record_event(
+            event_type=success_event,
+            checkout_id=checkout_id,
+            reason=success_reason,
+        )
+        return session
+
     async def capture_approved_order(
         self,
         checkout_id: str,
@@ -412,18 +600,57 @@ class TransactionCoordinator:
         """Live sandbox phase-2: Capture after buyer approved via PayPal JS SDK popup."""
         session = self._sessions.get(checkout_id)
         if not session:
-            raise ValueError(f"Checkout '{checkout_id}' not found.")
+            raise CheckoutNotFoundError(f"Checkout '{checkout_id}' not found.")
 
-        # Validate order ID matches what we created
-        if session.paypal_order_id and session.paypal_order_id != paypal_order_id:
-            raise ValueError(
-                f"Order ID mismatch: expected '{session.paypal_order_id}', got '{paypal_order_id}'. "
-                "Potential tampering detected."
-            )
+        if not ORDER_ID_RE.fullmatch(paypal_order_id or ""):
+            raise ValueError("Malformed PayPal order ID.")
 
         lock = self._get_execution_lock(checkout_id)
         async with lock:
-            if session.state == TransactionState.PAID:
+            # Everything below runs under the lock, so a concurrent execute or capture
+            # cannot change the state between the checks and the PayPal call.
+            if (
+                session.state == TransactionState.PAID
+                and session.paypal_order_id == paypal_order_id
+            ):
+                return session
+
+            if session.state != TransactionState.CHECKOUT_CREATED:
+                raise ValueError(
+                    f"Cannot capture checkout in state '{session.state.value}'. Must be CHECKOUT_CREATED."
+                )
+
+            # Only the order this checkout created may be captured through it.
+            if not session.paypal_order_id or session.paypal_order_id != paypal_order_id:
+                raise ValueError(
+                    f"Order ID mismatch: expected '{session.paypal_order_id}', got '{paypal_order_id}'. "
+                    "Potential tampering detected."
+                )
+
+            # The buyer approved in PayPal's popup some time after the gate ran. Policy
+            # revocation or expiry in that window must still stop the money moving.
+            policy = self._policies.get(session.policy_id)
+            if not policy:
+                session.state = TransactionState.FAILED
+                session.failure_reason = "Policy not found during capture."
+                return session
+            reval = DeterministicPolicyEngine.revalidate_pre_execution(
+                proposal=session.proposal,
+                policy=policy,
+                approved_fingerprint=session.approved_fingerprint,
+                approval_granted=session.approval_record is not None,
+            )
+            if reval.decision != PolicyDecisionType.ALLOW:
+                session.state = TransactionState.POLICY_REJECTED
+                session.failure_reason = reval.primary_reason
+                self.audit_ledger.record_event(
+                    event_type="PRE_EXECUTION_BLOCKED",
+                    checkout_id=checkout_id,
+                    policy_version=policy.version,
+                    proposal_fingerprint=reval.proposal_fingerprint,
+                    decision=reval.decision.value,
+                    reason=f"Blocked at capture: {reval.primary_reason}",
+                )
                 return session
 
             try:
@@ -433,24 +660,12 @@ class TransactionCoordinator:
                         request_id=f"{session.idempotency_key}_cap",
                     )
                 )
-                if capture_resp.status == "COMPLETED":
-                    session.state = TransactionState.PAID
-                    session.paypal_capture_id = capture_resp.capture_id
-                    self._record_spend(
-                        policy_id=session.policy_id,
-                        amount=session.proposal.total_amount,
-                        agent_id=session.proposal.agent_id,
-                    )
-                    self.audit_ledger.record_event(
-                        event_type="PAYMENT_COMPLETED",
-                        checkout_id=checkout_id,
-                        reason=f"Live sandbox capture successful. Capture ID: {capture_resp.capture_id}",
-                    )
-                else:
-                    session.state = TransactionState.FAILED
-                    session.failure_reason = (
-                        f"PayPal returned unexpected status: {capture_resp.status}"
-                    )
+                return self._settle_capture(
+                    session,
+                    capture_resp,
+                    success_event="PAYMENT_COMPLETED",
+                    success_reason=f"Live sandbox capture successful. Capture ID: {capture_resp.capture_id}",
+                )
             except Exception as e:
                 session.state = TransactionState.RECONCILIATION_REQUIRED
                 session.failure_reason = f"PayPal capture error: {str(e)}"
@@ -460,26 +675,44 @@ class TransactionCoordinator:
     async def reconcile_timeout(self, checkout_id: str) -> CheckoutSession:
         """Reconcile ambiguous timeout with PayPal."""
         session = self._sessions.get(checkout_id)
-        if not session or not session.paypal_order_id:
-            raise ValueError(f"Cannot reconcile checkout '{checkout_id}'.")
+        if not session:
+            raise CheckoutNotFoundError(f"Checkout '{checkout_id}' not found.")
 
-        details = await self.paypal_client.get_order_details(session.paypal_order_id)
-        session.reconciliation_data = details.raw_response
+        async with self._get_execution_lock(checkout_id):
+            # Already settled: reconciling again must never touch the budget a second time.
+            if session.state == TransactionState.PAID:
+                return session
 
-        if details.status == "COMPLETED":
-            session.state = TransactionState.PAID
-            session.paypal_capture_id = details.capture_id
-            self._record_spend(
-                policy_id=session.policy_id,
-                amount=session.proposal.total_amount,
-                agent_id=session.proposal.agent_id,
+            if session.state != TransactionState.RECONCILIATION_REQUIRED:
+                raise ValueError(
+                    f"Cannot reconcile checkout in state '{session.state.value}'. "
+                    "Must be RECONCILIATION_REQUIRED."
+                )
+
+            if not session.paypal_order_id:
+                # The timeout hit before PayPal returned an order, so nothing can have been charged.
+                session.state = TransactionState.FAILED
+                session.failure_reason = "No PayPal order was created before the timeout."
+                self.audit_ledger.record_event(
+                    event_type="RECONCILIATION_ABORT",
+                    checkout_id=checkout_id,
+                    reason="No PayPal order exists for this checkout. Safe to abort without charge.",
+                )
+                return session
+
+            details = await self.paypal_client.get_order_details(
+                session.paypal_order_id
             )
-            self.audit_ledger.record_event(
-                event_type="RECONCILIATION_SUCCESS",
-                checkout_id=checkout_id,
-                reason="Order reconciled as COMPLETED via PayPal lookup.",
-            )
-        else:
+            session.reconciliation_data = details.raw_response
+
+            if details.status == "COMPLETED":
+                return self._settle_capture(
+                    session,
+                    details,
+                    success_event="RECONCILIATION_SUCCESS",
+                    success_reason="Order reconciled as COMPLETED via PayPal lookup.",
+                )
+
             session.state = TransactionState.FAILED
             session.failure_reason = (
                 f"Order reconciled as non-captured ({details.status})."
@@ -490,7 +723,7 @@ class TransactionCoordinator:
                 reason=f"Order reconciled as {details.status}. Safe to abort without duplicate charge.",
             )
 
-        return session
+            return session
 
     def get_session(self, checkout_id: str) -> Optional[CheckoutSession]:
         return self._sessions.get(checkout_id)
@@ -517,64 +750,142 @@ class TransactionCoordinator:
                 quota = policy.agent_quotas[agent_id]
                 quota.spent_budget = round(max(0.0, quota.spent_budget - amount), 2)
 
+    def _find_checkout_for_resource(self, resource: Dict[str, Any]) -> Optional[str]:
+        """Match a PayPal webhook resource to a checkout by order or capture id.
+
+        PAYMENT.CAPTURE.REFUNDED carries the refund's own id in `resource.id`; the order
+        and capture it belongs to are in `supplementary_data` and the `up` link.
+        """
+        candidates = {resource.get("id"), resource.get("order_id")}
+        related = (resource.get("supplementary_data") or {}).get("related_ids") or {}
+        candidates.add(related.get("order_id"))
+        for link in resource.get("links") or []:
+            if isinstance(link, dict) and link.get("rel") == "up":
+                href = str(link.get("href") or "")
+                candidates.add(href.rstrip("/").rsplit("/", 1)[-1])
+        candidates.discard(None)
+        candidates.discard("")
+        for chk_id, sess in self._sessions.items():
+            if (
+                sess.paypal_order_id in candidates
+                or sess.paypal_capture_id in candidates
+            ):
+                return chk_id
+        return None
+
+    def _refund_in_budget_currency(
+        self, session: CheckoutSession, resource: Dict[str, Any], default: float
+    ) -> Optional[float]:
+        """Refund size in the proposal's own currency, or None when it cannot be trusted.
+
+        PayPal reports a refund in the currency it charged (USD for an INR proposal in the
+        sandbox), while the budget is tracked in the proposal's currency. Expressing the refund
+        as a fraction of the charge converts it without a second exchange rate.
+        """
+        amount = resource.get("amount") or {}
+        raw = amount.get("value")
+        if raw is None:
+            return default
+        charge_currency, charge_total = self.paypal_client.expected_charge(
+            session.proposal
+        )
+        if (amount.get("currency_code") or charge_currency) != charge_currency:
+            return None
+        try:
+            value = float(raw)
+        except (TypeError, ValueError):
+            return None
+        if not math.isfinite(value) or value <= 0 or charge_total <= 0:
+            return None
+        return round(value / charge_total * session.proposal.total_amount, 2)
+
     async def process_webhook_event(
         self,
         event_type: str,
         resource: Dict[str, Any],
         checkout_id: Optional[str] = None,
         summary: Optional[str] = None,
+        event_id: Optional[str] = None,
     ) -> Optional[CheckoutSession]:
         """Process asynchronous PayPal webhook events (refunds, disputes, reversals)."""
-        target_checkout_id = checkout_id
-        if not target_checkout_id:
-            order_id = resource.get("id") or resource.get("order_id")
-            for chk_id, sess in self._sessions.items():
-                if (
-                    sess.paypal_order_id == order_id
-                    or sess.paypal_capture_id == order_id
-                ):
-                    target_checkout_id = chk_id
-                    break
-
+        target_checkout_id = checkout_id or self._find_checkout_for_resource(resource)
         if not target_checkout_id or target_checkout_id not in self._sessions:
             return None
 
         session = self._sessions[target_checkout_id]
         policy = self._policies.get(session.policy_id)
 
-        if event_type in ("PAYMENT.CAPTURE.REFUNDED", "PAYMENT.SALE.REFUNDED"):
-            session.state = TransactionState.REFUNDED
-            amount_dict = resource.get("amount") or {}
-            amount_val = float(
-                amount_dict.get("value") or session.proposal.total_amount
-            )
-            self._record_refund(
-                policy_id=session.policy_id,
-                amount=amount_val,
-                agent_id=session.proposal.agent_id,
-            )
-            self.audit_ledger.record_event(
-                event_type="PAYMENT_REFUNDED",
-                checkout_id=target_checkout_id,
-                policy_version=policy.version if policy else None,
-                reason=summary
-                or f"Payment refunded for checkout {target_checkout_id}: {amount_val}",
-            )
-        elif event_type in ("CUSTOMER.DISPUTE.CREATED", "PAYMENT.CAPTURE.REVERSED"):
-            session.state = TransactionState.DISPUTED
-            self.audit_ledger.record_event(
-                event_type="PAYMENT_DISPUTED",
-                checkout_id=target_checkout_id,
-                policy_version=policy.version if policy else None,
-                reason=summary or f"Payment disputed via PayPal webhook: {event_type}",
-            )
+        async with self._get_execution_lock(target_checkout_id):
+            # PayPal redelivers webhooks, and anyone can replay a captured one: apply each
+            # event once. The id is recorded only after it was applied, so a delivery that
+            # failed halfway is still processed when PayPal retries it.
+            if event_id and event_id in self._seen_webhook_events:
+                return session
+
+            if event_type in ("PAYMENT.CAPTURE.REFUNDED", "PAYMENT.SALE.REFUNDED"):
+                self._apply_refund(session, policy, resource, summary)
+            elif event_type in (
+                "CUSTOMER.DISPUTE.CREATED",
+                "PAYMENT.CAPTURE.REVERSED",
+            ):
+                if session.state == TransactionState.PAID:
+                    session.state = TransactionState.DISPUTED
+                    self.audit_ledger.record_event(
+                        event_type="PAYMENT_DISPUTED",
+                        checkout_id=target_checkout_id,
+                        policy_version=policy.version if policy else None,
+                        reason=summary
+                        or f"Payment disputed via PayPal webhook: {event_type}",
+                    )
+
+            if event_id:
+                self._seen_webhook_events[event_id] = None
+                if len(self._seen_webhook_events) > 10_000:
+                    self._seen_webhook_events.pop(next(iter(self._seen_webhook_events)))
         return session
+
+    def _apply_refund(
+        self,
+        session: CheckoutSession,
+        policy: Optional[AuthorizationPolicy],
+        resource: Dict[str, Any],
+        summary: Optional[str],
+    ) -> None:
+        # Money can only come back for a checkout that actually captured it.
+        if session.state != TransactionState.PAID:
+            return
+        outstanding = round(session.proposal.total_amount - session.refunded_total, 2)
+        requested = self._refund_in_budget_currency(session, resource, default=outstanding)
+        if requested is None:
+            return
+        credit = min(requested, outstanding)
+        if credit <= 0:
+            return
+
+        session.refunded_total = round(session.refunded_total + credit, 2)
+        self._record_refund(
+            policy_id=session.policy_id,
+            amount=credit,
+            agent_id=session.proposal.agent_id,
+        )
+        fully_refunded = session.refunded_total >= session.proposal.total_amount
+        if fully_refunded:
+            session.state = TransactionState.REFUNDED
+        self.audit_ledger.record_event(
+            event_type="PAYMENT_REFUNDED"
+            if fully_refunded
+            else "PAYMENT_PARTIALLY_REFUNDED",
+            checkout_id=session.checkout_id,
+            policy_version=policy.version if policy else None,
+            reason=summary
+            or f"Payment refunded for checkout {session.checkout_id}: {credit}",
+        )
 
     def generate_audit_receipt(self, checkout_id: str) -> SignedAuditReceipt:
         """Generate tamper-evident, digitally signed audit receipt for a checkout session."""
         session = self._sessions.get(checkout_id)
         if not session:
-            raise ValueError(f"Checkout '{checkout_id}' not found.")
+            raise CheckoutNotFoundError(f"Checkout '{checkout_id}' not found.")
 
         return generate_signed_receipt(
             checkout_id=checkout_id,

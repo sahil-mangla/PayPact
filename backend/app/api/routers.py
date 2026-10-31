@@ -1,10 +1,14 @@
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
-from fastapi import APIRouter, HTTPException, Query
+import os
+import time
+from typing import Any, Dict, List, Literal, Optional
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel, Field
 
 from app.agent.shopper_agent import ShopperAgent
+from app.api.ratelimit import llm_rate_limit
 from app.catalogue.products import CATALOGUE, Product
 from app.lab.benchmark import (
     IntegrityLab,
@@ -16,9 +20,19 @@ from app.models.schemas import (
     PurchaseProposal,
     SignedAuditReceipt,
 )
-from app.state.machine import CheckoutSession, TransactionCoordinator
+from app.state.machine import (
+    CheckoutNotFoundError,
+    CheckoutSession,
+    TransactionCoordinator,
+)
 
 router = APIRouter(prefix="/api")
+
+def _checkout_error(e: Exception) -> HTTPException:
+    """404 for an unknown checkout, 400 for anything the state machine refuses."""
+    status = 404 if isinstance(e, CheckoutNotFoundError) else 400
+    return HTTPException(status_code=status, detail=str(e))
+
 
 # Global singleton coordinator & lab for the app
 coordinator = TransactionCoordinator()
@@ -27,17 +41,24 @@ lab = IntegrityLab()
 
 class ParseIntentRequest(BaseModel):
     prompt: str = Field(
-        ..., min_length=2, description="Natural language purchase request"
+        ...,
+        min_length=2,
+        max_length=500,
+        description="Natural language purchase request",
     )
-    user_id: str = Field(default="usr_shopper", description="User identifier")
+    user_id: str = Field(
+        default="usr_shopper", max_length=64, description="User identifier"
+    )
 
 
 class CreateProposalRequest(BaseModel):
-    prompt: str = Field(..., min_length=2)
-    policy_id: str = Field(..., min_length=1)
-    preferred_sku: Optional[str] = None
+    prompt: str = Field(..., min_length=2, max_length=500)
+    policy_id: str = Field(..., min_length=1, max_length=64)
+    preferred_sku: Optional[str] = Field(None, max_length=64)
     agent_id: Optional[str] = Field(
-        default="agent_hardware", description="Agent persona ID in swarm"
+        default="agent_hardware",
+        max_length=64,
+        description="Agent persona ID in swarm",
     )
 
 
@@ -47,7 +68,7 @@ class SimulateWebhookRequest(BaseModel):
         default="PAYMENT.CAPTURE.REFUNDED",
         description="PayPal event type (e.g. PAYMENT.CAPTURE.REFUNDED, CUSTOMER.DISPUTE.CREATED)",
     )
-    amount: Optional[float] = None
+    amount: Optional[float] = Field(None, gt=0)
     reason: Optional[str] = None
 
 
@@ -56,12 +77,12 @@ class ApproveProposalRequest(BaseModel):
 
 
 class ExecutePaymentRequest(BaseModel):
-    simulate_drift_type: Optional[str] = Field(
+    simulate_drift_type: Optional[Literal["price_drift", "sku_substitution", "timeout"]] = Field(
         None,
         description="Optional simulation: 'price_drift', 'sku_substitution', 'timeout'",
     )
-    drift_shipping_fee: Optional[float] = None
-    drift_sku: Optional[str] = None
+    drift_shipping_fee: Optional[float] = Field(None, ge=0, le=1_000_000)
+    drift_sku: Optional[str] = Field(None, max_length=64)
 
 
 class CapturePaymentRequest(BaseModel):
@@ -69,46 +90,66 @@ class CapturePaymentRequest(BaseModel):
 
     paypal_order_id: str = Field(
         ...,
+        pattern=r"^[A-Za-z0-9-]{1,64}$",
         description="The PayPal Order ID to capture (returned by createOrder callback)",
     )
 
 
 class LabRunRequest(BaseModel):
-    scenario_id: Optional[str] = None
-    system_type: str = Field(
-        default="PROPOSED_APIL"
-    )  # BASELINE_A, BASELINE_B, PROPOSED_APIL
+    scenario_id: Optional[str] = Field(None, max_length=16)
+    system_type: Literal["BASELINE_A", "BASELINE_B", "PROPOSED_APIL"] = "PROPOSED_APIL"
 
 
 # ----------------------------------------------------
 # 1. Health & Catalogue
 # ----------------------------------------------------
+# Probing Ollama and Gemini costs a network round trip each, and /health doubles as the
+# hosting platform's liveness check, so the model status is cached briefly.
+_MODEL_HEALTH_TTL_SECONDS = 30.0
+_model_health_cache: Dict[str, Any] = {}
+
+
+def reset_model_health_cache() -> None:
+    _model_health_cache.clear()
+
+
+def _public_model_info(info: Dict[str, Any]) -> Dict[str, Any]:
+    """Availability and model name only: no URLs, error bodies or installed-model lists."""
+    return {k: info[k] for k in ("available", "model", "installed", "provider") if k in info}
+
+
+def _model_health() -> Dict[str, Any]:
+    cached = _model_health_cache.get("value")
+    now = time.monotonic()
+    if cached and now - cached[0] < _MODEL_HEALTH_TTL_SECONDS:
+        return cached[1]
+    from app.agent.gemini_client import GeminiClient
+    from app.agent.ollama_client import OllamaClient
+
+    value = {
+        "ollama": _public_model_info(OllamaClient.check_health()),
+        "gemini": _public_model_info(GeminiClient.check_health()),
+    }
+    _model_health_cache["value"] = (now, value)
+    return value
+
+
 @router.get("/health")
 async def health_check():
     is_mock = coordinator.paypal_client.mock_mode
-    from app.agent.ollama_client import OllamaClient
-    from app.agent.gemini_client import GeminiClient
-
-    ollama_info = OllamaClient.check_health()
-    gemini_info = GeminiClient.check_health()
+    models = await run_in_threadpool(_model_health)
     return {
         "status": "healthy",
         "service": "Agent Payment Integrity Layer (APIL)",
         "paypal_mode": "mock" if is_mock else "live_sandbox",
-        "paypal_client_id": coordinator.paypal_client.client_id[:20] + "..."
-        if not is_mock
-        else None,
-        "ollama": ollama_info,
-        "gemini": gemini_info,
+        **models,
     }
 
 
 @router.get("/agent/model-status")
 async def get_agent_model_status():
     """Return local Ollama AI model availability and active configuration."""
-    from app.agent.ollama_client import OllamaClient
-
-    return OllamaClient.check_health()
+    return (await run_in_threadpool(_model_health))["ollama"]
 
 
 @router.get("/catalogue", response_model=List[Product])
@@ -119,15 +160,34 @@ async def get_catalogue():
 # ----------------------------------------------------
 # 2. Authorization Policies
 # ----------------------------------------------------
-@router.post("/authorizations/parse-intent", response_model=AuthorizationPolicy)
+@router.post(
+    "/authorizations/parse-intent",
+    response_model=AuthorizationPolicy,
+    dependencies=[Depends(llm_rate_limit)],
+)
 async def parse_intent_to_policy(req: ParseIntentRequest):
     """Extract structured policy constraints from natural language."""
-    return ShopperAgent.parse_intent_to_policy(req.prompt, user_id=req.user_id)
+    # The agent calls an LLM over blocking HTTP; keep that off the event loop.
+    return await run_in_threadpool(
+        ShopperAgent.parse_intent_to_policy, req.prompt, user_id=req.user_id
+    )
 
 
 @router.post("/authorizations", response_model=AuthorizationPolicy)
 async def register_policy(policy: AuthorizationPolicy):
-    """Register user-confirmed authorization policy."""
+    """Register user-confirmed authorization policy.
+
+    Spend and revocation state belong to the server, so anything the client sends for them is
+    reset, and an existing policy id can never be replaced (that would undo a revocation).
+    """
+    if coordinator.get_policy(policy.policy_id):
+        raise HTTPException(
+            status_code=409, detail=f"Policy '{policy.policy_id}' already exists."
+        )
+    policy.spent_total = 0.0
+    policy.is_revoked = False
+    for quota in policy.agent_quotas.values():
+        quota.spent_budget = 0.0
     return coordinator.register_policy(policy)
 
 
@@ -150,7 +210,7 @@ async def revoke_policy(policy_id: str):
 # ----------------------------------------------------
 # 3. Agent Proposals & Checkout Lifecycle
 # ----------------------------------------------------
-@router.post("/proposals")
+@router.post("/proposals", dependencies=[Depends(llm_rate_limit)])
 async def create_proposal(req: CreateProposalRequest):
     policy = coordinator.get_policy(req.policy_id)
     if not policy:
@@ -159,7 +219,8 @@ async def create_proposal(req: CreateProposalRequest):
         )
 
     try:
-        agent_res = ShopperAgent.generate_proposal(
+        agent_res = await run_in_threadpool(
+            ShopperAgent.generate_proposal,
             user_prompt=req.prompt,
             policy=policy,
             preferred_sku=req.preferred_sku,
@@ -177,6 +238,8 @@ async def create_proposal(req: CreateProposalRequest):
         "recommendation_explanation": agent_res["recommendation_explanation"],
         "proposal": proposal,
         "product": agent_res["product"],
+        "agent_mode": agent_res.get("agent_mode", "deterministic"),
+        "agent_trace": agent_res.get("agent_trace", []),
         "failure_reason": session.failure_reason,
     }
 
@@ -186,7 +249,7 @@ async def approve_checkout(checkout_id: str, req: ApproveProposalRequest):
     try:
         return coordinator.approve_proposal(checkout_id, user_id=req.user_id)
     except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise _checkout_error(e)
 
 
 @router.post("/checkouts/{checkout_id}/execute")
@@ -274,7 +337,7 @@ async def execute_checkout(checkout_id: str, req: ExecutePaymentRequest):
                 "approve_url": approve_url,
             }
     except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise _checkout_error(e)
 
 
 @router.post("/checkouts/{checkout_id}/capture")
@@ -296,7 +359,7 @@ async def capture_checkout(checkout_id: str, req: CapturePaymentRequest):
         )
         return {"session": updated_session, "paypal_mode": "live_sandbox"}
     except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise _checkout_error(e)
 
 
 @router.post("/checkouts/{checkout_id}/reconcile", response_model=CheckoutSession)
@@ -304,7 +367,7 @@ async def reconcile_checkout(checkout_id: str):
     try:
         return await coordinator.reconcile_timeout(checkout_id)
     except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise _checkout_error(e)
 
 
 @router.get("/checkouts/{checkout_id}", response_model=CheckoutSession)
@@ -321,7 +384,7 @@ async def get_checkout_receipt(checkout_id: str):
     try:
         return coordinator.generate_audit_receipt(checkout_id)
     except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise _checkout_error(e)
 
 
 @router.get("/receipt/sample")
@@ -362,8 +425,32 @@ async def verify_receipt_endpoint(receipt: SignedAuditReceipt):
 
 
 @router.post("/webhooks/paypal")
-async def handle_paypal_webhook(payload: Dict[str, Any]):
-    """Production PayPal Webhook Listener endpoint."""
+async def handle_paypal_webhook(request: Request):
+    """Production PayPal Webhook Listener endpoint.
+
+    Every delivery is verified against PayPal's signature API before it can touch
+    checkout state. With no PAYPAL_WEBHOOK_ID configured, or in mock mode, it is
+    rejected: use /webhooks/simulate for local demos.
+    """
+    webhook_id = os.getenv("PAYPAL_WEBHOOK_ID", "").strip()
+    if coordinator.paypal_client.mock_mode or not webhook_id:
+        raise HTTPException(
+            status_code=503,
+            detail="PayPal webhook verification is not configured (set PAYPAL_WEBHOOK_ID with live sandbox credentials).",
+        )
+    try:
+        payload = await request.json()
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Webhook body must be JSON.")
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="Webhook body must be an object.")
+
+    verified = await coordinator.paypal_client.verify_webhook_signature(
+        headers=request.headers, event=payload, webhook_id=webhook_id
+    )
+    if not verified:
+        raise HTTPException(status_code=401, detail="Invalid PayPal webhook signature.")
+
     event_type = payload.get("event_type", "")
     resource = payload.get("resource", {})
     summary = payload.get("summary")
@@ -371,6 +458,7 @@ async def handle_paypal_webhook(payload: Dict[str, Any]):
         event_type=event_type,
         resource=resource,
         summary=summary,
+        event_id=payload.get("id"),
     )
     return {
         "status": "processed",
@@ -381,7 +469,18 @@ async def handle_paypal_webhook(payload: Dict[str, Any]):
 
 @router.post("/webhooks/simulate")
 async def simulate_paypal_webhook(req: SimulateWebhookRequest):
-    """Interactive webhook simulation for local demos and Integrity Lab."""
+    """Interactive webhook simulation for local demos and Integrity Lab.
+
+    It fabricates PayPal events, so it only runs in mock mode unless explicitly enabled.
+    """
+    if not (
+        coordinator.paypal_client.mock_mode
+        or os.getenv("ENABLE_WEBHOOK_SIMULATION", "").lower() in ("true", "1", "yes")
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail="Webhook simulation is disabled against live PayPal (set ENABLE_WEBHOOK_SIMULATION=true for a demo).",
+        )
     session = coordinator.get_session(req.checkout_id)
     if not session:
         raise HTTPException(
@@ -458,6 +557,10 @@ async def list_scenarios():
 @router.post("/lab/run")
 async def run_lab_test(req: LabRunRequest):
     if req.scenario_id:
+        if req.scenario_id not in {d.scenario_id for d in SCENARIO_DEFINITIONS}:
+            raise HTTPException(
+                status_code=404, detail=f"Unknown scenario '{req.scenario_id}'."
+            )
         result = await lab.run_scenario(req.scenario_id, system_type=req.system_type)
         return {"single_run": result}
     else:

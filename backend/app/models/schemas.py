@@ -4,7 +4,7 @@ import math
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, List, Optional
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, computed_field, field_validator
 
 
 class PolicyDecisionType(str, Enum):
@@ -48,6 +48,7 @@ class AgentQuota(BaseModel):
         default=True, description="Whether this agent is authorized to submit proposals"
     )
 
+    @computed_field  # type: ignore[prop-decorator]
     @property
     def remaining_budget(self) -> float:
         return round(max(0.0, self.allocated_budget - self.spent_budget), 2)

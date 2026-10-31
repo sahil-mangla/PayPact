@@ -255,8 +255,10 @@ async def test_api_receipt_and_simulate_webhook_endpoints():
         )
         checkout_id = prop_resp.json()["checkout_id"]
 
-        # Execute checkout
-        await client.post(f"/api/checkouts/{checkout_id}/execute", json={})
+        # Approve (the proposal is above the auto limit), then execute checkout
+        await client.post(f"/api/checkouts/{checkout_id}/approve", json={})
+        paid = await client.post(f"/api/checkouts/{checkout_id}/execute", json={})
+        assert paid.json()["session"]["state"] == "PAID"
 
         # 3. Fetch signed receipt
         receipt_resp = await client.get(f"/api/checkouts/{checkout_id}/receipt")

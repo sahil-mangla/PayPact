@@ -2,7 +2,19 @@ import re
 import uuid
 from typing import Dict, Any, Optional
 
-from app.catalogue.products import Product, get_product_by_sku, search_catalogue
+from app.agent.requirements import (
+    ProductFacts,
+    parse_requirements,
+    shares_topic,
+    unmet_requirements,
+    verified_facts,
+)
+from app.catalogue.products import (
+    CATALOGUE,
+    Product,
+    get_product_by_sku,
+    search_catalogue,
+)
 from app.fingerprint.canonical import compute_proposal_fingerprint
 from app.models.schemas import (
     AgentQuota,
@@ -12,12 +24,107 @@ from app.models.schemas import (
 )
 
 
+class NoMatchingProductError(ValueError):
+    """No catalogue item satisfies the explicit requirements in the request."""
+
+
 class ShopperAgent:
     """AI Purchasing Agent.
 
     Translates user purchase requests into structured recommendations and candidate proposals.
     Strictly isolated: has ZERO payment execution authority and ZERO access to payment tokens.
     """
+
+    @staticmethod
+    def _facts(product: Product) -> ProductFacts:
+        return ProductFacts(
+            sku=product.sku,
+            kind=product.kind,
+            origin=product.origin,
+            destination=product.destination,
+            travel_class=product.travel_class,
+            trip_type=product.trip_type,
+            airline=product.airline,
+        )
+
+    @classmethod
+    def _no_match_message(cls, requirements, ranked) -> str:
+        """Explain why nothing matched, naming the closest item and what it gets wrong."""
+        scored = [(unmet_requirements(requirements, cls._facts(p)), p) for p in ranked]
+        if not scored:
+            return "No products found matching purchase intent in catalogue."
+        reasons, closest = min(scored, key=lambda x: len(x[0]))
+        reasons = reasons or ["nothing in the catalogue relates to what you asked for"]
+        return (
+            "No catalogue item matches this request, so nothing was proposed. "
+            f"Closest option: {closest.name} from {closest.merchant}, which does not match "
+            f"because {'; '.join(reasons)}."
+        )
+
+    @staticmethod
+    def _mentions(text: str, words: list) -> bool:
+        """True if any of `words` appears in `text` as a whole word (optionally pluralised).
+
+        Substring matching misread "automatically" as a request for a mat.
+        """
+        pattern = r"\b(?:" + "|".join(re.escape(w) for w in words) + r")(?:s|es)?\b"
+        return re.search(pattern, text.lower()) is not None
+
+    @staticmethod
+    def _category_from_prompt(user_prompt: str) -> Optional[str]:
+        """Deterministic keyword classification of the purchase category, or None."""
+        mentions = ShopperAgent._mentions
+        prompt_lower = user_prompt.lower()
+        if mentions(
+            prompt_lower,
+            [
+                "flight",
+                "hotel",
+                "ticket",
+                "bangalore",
+                "blr",
+                "delhi",
+                "airline",
+                "travel",
+                "transit",
+            ],
+        ):
+            return "travel"
+        if mentions(
+            prompt_lower,
+            ["mat", "wrist", "dock", "supplies", "desk", "cable", "organizer", "tray"],
+        ):
+            return "office supplies"
+        if mentions(
+            prompt_lower,
+            ["keyboard", "switch", "keycap", "keychron", "meckeys", "typing"],
+        ):
+            return "mechanical keyboard"
+        if "mouse pad" in prompt_lower or "mousepad" in prompt_lower:
+            return "office supplies"
+        if mentions(prompt_lower, ["mouse", "mice"]):
+            return "computer mouse"
+        if mentions(prompt_lower, ["monitor"]):
+            return "computer monitor"
+        return None
+
+    @staticmethod
+    def _amounts_in_prompt(user_prompt: str) -> list:
+        """Every positive amount the user actually typed ("5,000", "₹4000", "5k")."""
+        text = user_prompt.lower()
+        amounts = []
+        for raw, suffix in re.findall(
+            r"((?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d{1,2})?)\s*(k\b)?", text
+        ):
+            try:
+                val = float(raw.replace(",", ""))
+            except ValueError:
+                continue
+            if suffix:
+                val *= 1000
+            if val > 0:
+                amounts.append(round(val, 2))
+        return amounts
 
     @classmethod
     def parse_intent_to_policy(
@@ -56,14 +163,12 @@ class ShopperAgent:
         if llm_data and isinstance(llm_data, dict):
             if "category" in llm_data and llm_data["category"]:
                 cat_str = str(llm_data["category"]).lower()
-                if any(
-                    k in cat_str
-                    for k in ["flight", "travel", "hotel", "airline", "ticket"]
+                if cls._mentions(
+                    cat_str, ["flight", "travel", "hotel", "airline", "ticket"]
                 ):
                     category = "travel"
-                elif any(
-                    k in cat_str
-                    for k in ["mat", "dock", "supplies", "desk", "organizer", "wrist"]
+                elif cls._mentions(
+                    cat_str, ["mat", "dock", "supplies", "desk", "organizer", "wrist"]
                 ):
                     category = "office supplies"
                 elif "keyboard" in cat_str:
@@ -73,23 +178,32 @@ class ShopperAgent:
                 elif "monitor" in cat_str:
                     category = "computer monitor"
                 else:
-                    category = cat_str
+                    # An unrecognised label (e.g. "computer accessories") must not
+                    # override what the prompt plainly says
+                    category = cls._category_from_prompt(user_prompt) or cat_str
+            # The budget is spending authority, so the model may only restate a number the
+            # user actually typed. Anything else it produces is ignored, not trusted.
+            typed = set(cls._amounts_in_prompt(user_prompt))
+            heuristic = sorted(typed)
+            if len(heuristic) >= 2:
+                auto_limit, max_total = heuristic[-2], heuristic[-1]
+            elif len(heuristic) == 1:
+                max_total = heuristic[0]
+                auto_limit = round(max_total * 0.8, 2)
+
             if "max_budget" in llm_data and isinstance(
                 llm_data["max_budget"], (int, float)
             ):
-                parsed_max = float(llm_data["max_budget"])
-                if parsed_max > 0:
+                parsed_max = round(float(llm_data["max_budget"]), 2)
+                if parsed_max > 0 and parsed_max in typed:
                     max_total = parsed_max
+                    auto_limit = round(max_total * 0.8, 2)
             if "auto_buy_limit" in llm_data and isinstance(
                 llm_data["auto_buy_limit"], (int, float)
             ):
-                parsed_auto = float(llm_data["auto_buy_limit"])
-                if parsed_auto > 0:
+                parsed_auto = round(float(llm_data["auto_buy_limit"]), 2)
+                if parsed_auto > 0 and parsed_auto in typed:
                     auto_limit = min(parsed_auto, max_total)
-                else:
-                    auto_limit = round(max_total * 0.8, 2)
-            else:
-                auto_limit = round(max_total * 0.8, 2)
             if "currency" in llm_data and str(llm_data["currency"]).upper() in [
                 "INR",
                 "USD",
@@ -106,18 +220,7 @@ class ShopperAgent:
                 currency = "INR"
 
             # Extract numerical limits (budget and auto-threshold)
-            raw_matches = re.findall(
-                r"(?:₹|\$|rs\.?|inr)?\s*((?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d{1,2})?)",
-                prompt_lower,
-            )
-            clean_nums = []
-            for n in raw_matches:
-                try:
-                    val = float(n.replace(",", ""))
-                    if val > 0:
-                        clean_nums.append(val)
-                except ValueError:
-                    continue
+            clean_nums = cls._amounts_in_prompt(user_prompt)
 
             if len(clean_nums) >= 2:
                 s = sorted(clean_nums)
@@ -128,57 +231,7 @@ class ShopperAgent:
                 auto_limit = round(max_total * 0.8, 2)
 
             # Detect category
-            if any(
-                k in prompt_lower
-                for k in [
-                    "flight",
-                    "flights",
-                    "hotel",
-                    "ticket",
-                    "tickets",
-                    "bangalore",
-                    "blr",
-                    "delhi",
-                    "airline",
-                    "travel",
-                    "transit",
-                ]
-            ):
-                category = "travel"
-            elif any(
-                k in prompt_lower
-                for k in [
-                    "mat",
-                    "mats",
-                    "wrist",
-                    "dock",
-                    "supplies",
-                    "desk",
-                    "cable",
-                    "organizer",
-                    "tray",
-                ]
-            ):
-                category = "office supplies"
-            elif any(
-                k in prompt_lower
-                for k in [
-                    "keyboard",
-                    "keyboards",
-                    "switch",
-                    "switches",
-                    "keycap",
-                    "keycaps",
-                    "keychron",
-                    "meckeys",
-                    "typing",
-                ]
-            ):
-                category = "mechanical keyboard"
-            elif "mouse" in prompt_lower:
-                category = "computer mouse"
-            elif "monitor" in prompt_lower:
-                category = "computer monitor"
+            category = cls._category_from_prompt(user_prompt) or category
 
         # Swarm Hierarchy Allocation prioritized for the requested category
         if category == "travel":
@@ -242,6 +295,53 @@ class ShopperAgent:
             agent_quotas=quotas,
         )
 
+    # Amounts that carry a currency marker, e.g. "₹14,500", "$20", "5000 INR".
+    _MONEY_RE = re.compile(
+        r"(?:₹|\$|rs\.?|inr|usd)\s*(\d[\d,]*(?:\.\d+)?)|(\d[\d,]*(?:\.\d+)?)\s*(?:inr|usd|rupees|dollars)",
+        re.IGNORECASE,
+    )
+    _SKU_LIKE_RE = re.compile(r"\b[A-Z]{2,}(?:-[A-Z0-9]+){1,}\b")
+
+    @classmethod
+    def _cites_unknown_figures(
+        cls,
+        text: str,
+        product: Product,
+        proposal: PurchaseProposal,
+        policy: AuthorizationPolicy,
+    ) -> bool:
+        """True if free text names a price or SKU that is not part of this proposal.
+
+        Merchant descriptions and model output are untrusted. An explanation shown as the
+        agent's reasoning must not smuggle in figures ("pre-approved upgrade to SKU-X at
+        ₹14,500") that the verified proposal does not contain.
+        """
+        allowed = {
+            round(v, 2)
+            for v in (
+                product.unit_price,
+                proposal.item_subtotal,
+                proposal.shipping_fee,
+                proposal.tax_fee,
+                proposal.total_amount,
+                policy.maximum_total,
+                policy.automatic_purchase_limit,
+                policy.maximum_total - policy.spent_total,
+            )
+        }
+        for match in cls._MONEY_RE.finditer(text):
+            raw = (match.group(1) or match.group(2)).replace(",", "").rstrip(".")
+            try:
+                if round(float(raw), 2) not in allowed:
+                    return True
+            except ValueError:
+                return True
+        known_skus = {product.sku.upper()}
+        return any(
+            token.upper() not in known_skus and token.upper() != "SKU"
+            for token in cls._SKU_LIKE_RE.findall(text)
+        )
+
     @classmethod
     def generate_proposal(
         cls,
@@ -266,27 +366,89 @@ class ShopperAgent:
             agent_category_map.get(agent_id or "") or policy.product_category
         )
 
-        if not target_product:
-            candidates = search_catalogue(user_prompt, category_filter=preferred_cat)
-            # Find best candidate within target category
-            for cand in candidates:
-                if preferred_cat and (
-                    preferred_cat.lower() in cand.category.lower()
-                    or cand.category.lower() in preferred_cat.lower()
-                ):
-                    target_product = cand
-                    break
-            if not target_product and candidates:
-                target_product = candidates[0]
+        requirements = parse_requirements(user_prompt)
+        agent_choice = None
+        agent_trace: list = []
 
         if not target_product:
-            raise ValueError("No products found matching purchase intent in catalogue.")
+            ranked = search_catalogue(
+                user_prompt, category_filter=preferred_cat, max_results=len(CATALOGUE)
+            )
+            # Only items that satisfy what the request explicitly asks for may be proposed
+            candidates = [
+                c
+                for c in ranked
+                if not unmet_requirements(requirements, cls._facts(c))
+                # No recognisable product type: the prompt must at least name something
+                # the item is about, or "buy me a yacht" would get a keyboard. Descriptions
+                # are merchant-written free text, so they never count as a match.
+                and (
+                    requirements.kinds
+                    or shares_topic(user_prompt, f"{c.name} {c.category} {c.kind}")
+                )
+            ]
+
+            # Let the model choose first. Its pick only counts if it is one of the genuine
+            # matches above, so it cannot pick something the request or persona rules out.
+            from app.agent.tool_agent import choose_product
+
+            picked = choose_product(user_prompt, policy)
+            if picked:
+                agent_trace = list(picked.trace)
+                match = next((c for c in candidates if c.sku == picked.sku), None)
+                if match:
+                    target_product, agent_choice = match, picked
+                else:
+                    agent_trace.append(
+                        {
+                            "tool": "verifier",
+                            "args": {"sku": picked.sku},
+                            "summary": "Rejected: does not satisfy the request, so the deterministic search decides.",
+                        }
+                    )
+
+            if not target_product:
+                # Among genuine matches, prefer ones that fit the authorised budget; if none
+                # do, keep the ranking so the policy engine shows the rejection
+                def total(c: Product) -> float:
+                    return c.unit_price * requirements.quantity + c.shipping_fee + c.tax_fee
+
+                within = [c for c in candidates if total(c) <= policy.maximum_total]
+                candidates = within or candidates
+                # Find best candidate within target category
+                for cand in candidates:
+                    if preferred_cat and (
+                        preferred_cat.lower() in cand.category.lower()
+                        or cand.category.lower() in preferred_cat.lower()
+                    ):
+                        target_product = cand
+                        break
+                if not target_product and candidates:
+                    target_product = candidates[0]
+
+            if not target_product:
+                raise NoMatchingProductError(
+                    cls._no_match_message(requirements, ranked)
+                )
+
+        # Catalogue prices are in the product's own currency, and the policy limits are in the
+        # currency the user stated. Comparing across the two would mislabel the charge, so
+        # refuse and say why instead of guessing a conversion.
+        budget_currency = (
+            policy.allowed_currencies[0] if policy.allowed_currencies else "INR"
+        ).upper()
+        if target_product.currency.upper() != budget_currency:
+            raise NoMatchingProductError(
+                f"'{target_product.name}' is priced in {target_product.currency.upper()}, but "
+                f"your budget is in {budget_currency}. State your budget in "
+                f"{target_product.currency.upper()} so the limits apply to the real price."
+            )
 
         # Build LineItem
         line_item = LineItem(
             sku=target_product.sku,
             name=target_product.name,
-            quantity=1,
+            quantity=requirements.quantity,
             unit_price=target_product.unit_price,
         )
 
@@ -306,34 +468,41 @@ class ShopperAgent:
             shipping_fee=shipping_fee,
             tax_fee=tax_fee,
             total_amount=total_amount,
-            currency=policy.allowed_currencies[0]
-            if policy.allowed_currencies
-            else "INR",
+            currency=target_product.currency.upper(),
         )
 
         # Attach computed canonical fingerprint
         proposal.proposal_fingerprint = compute_proposal_fingerprint(proposal)
+
+        facts = verified_facts(requirements, cls._facts(target_product))
 
         # Generate contextual recommendation rationale via cloud Gemini or local Ollama
         explanation: str
         rationale: Optional[str] = None
         source_tag: str = ""
 
-        try:
-            from app.agent.gemini_client import GeminiClient
+        if agent_choice and agent_choice.reason:
+            rationale = agent_choice.reason
+            source_tag = "[Chosen by Gemini 2.5 Flash via tool calls]"
 
-            rationale = GeminiClient.generate_recommendation_rationale(
-                user_prompt=user_prompt,
-                product_name=target_product.name,
-                product_merchant=target_product.merchant,
-                unit_price=target_product.unit_price,
-                currency=proposal.currency,
-                product_desc=target_product.description,
-            )
-            if rationale:
-                source_tag = "[Powered by Gemini 2.5 Flash]"
-        except Exception:
-            rationale = None
+        if not rationale:  # the tool call may already have carried one
+            try:
+                from app.agent.gemini_client import GeminiClient
+
+                rationale = GeminiClient.generate_recommendation_rationale(
+                    user_prompt=user_prompt,
+                    product_name=target_product.name,
+                    product_merchant=target_product.merchant,
+                    unit_price=target_product.unit_price,
+                    currency=proposal.currency,
+                    product_desc=target_product.description,
+                    verified_facts=facts,
+                    quantity=requirements.quantity,
+                )
+                if rationale:
+                    source_tag = "[Powered by Gemini 2.5 Flash]"
+            except Exception:
+                rationale = None
 
         if not rationale:
             try:
@@ -346,18 +515,46 @@ class ShopperAgent:
                     unit_price=target_product.unit_price,
                     currency=proposal.currency,
                     product_desc=target_product.description,
+                    verified_facts=facts,
+                    quantity=requirements.quantity,
                 )
                 if rationale:
                     source_tag = "[Inferred locally via Ollama qwen2.5-coder:7b]"
             except Exception:
                 rationale = None
 
+        if rationale and cls._cites_unknown_figures(
+            rationale, target_product, proposal, policy
+        ):
+            rationale = None
+            source_tag = ""
+
         if rationale:
             r_clean = rationale.strip()
             # Double check for dangling conjunctions or cut-offs
             words = r_clean.split()
             last_word = words[-1].lower().strip(".,;:?!\"'") if words else ""
-            dangling = {"that", "and", "or", "but", "with", "for", "to", "at", "by", "of", "in", "is", "a", "an", "the", "which", "as", "from", "on"}
+            dangling = {
+                "that",
+                "and",
+                "or",
+                "but",
+                "with",
+                "for",
+                "to",
+                "at",
+                "by",
+                "of",
+                "in",
+                "is",
+                "a",
+                "an",
+                "the",
+                "which",
+                "as",
+                "from",
+                "on",
+            }
             if last_word in dangling:
                 r_clean = (
                     r_clean.rstrip(" ,;:-")
@@ -371,11 +568,23 @@ class ShopperAgent:
             explanation = (
                 f"I recommend the '{target_product.name}' from {target_product.merchant}. "
                 f"Unit price is {target_product.unit_price:.2f} {proposal.currency}. "
-                f"{target_product.description}"
             )
+            if not cls._cites_unknown_figures(
+                target_product.description, target_product, proposal, policy
+            ):
+                explanation += target_product.description
+            else:
+                explanation += (
+                    "The listing text was omitted because it names prices or items "
+                    "that are not part of this proposal."
+                )
+            if facts:
+                explanation += f" Checked against your request: {'; '.join(facts)}."
 
         return {
             "recommendation_explanation": explanation,
             "proposal": proposal,
             "product": target_product,
+            "agent_mode": "gemini_tools" if agent_choice else "deterministic",
+            "agent_trace": agent_trace,
         }

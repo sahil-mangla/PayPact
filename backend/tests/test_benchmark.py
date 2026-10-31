@@ -71,7 +71,8 @@ async def test_scenario_g_timeout_reconciliation(lab):
 @pytest.mark.asyncio
 async def test_full_benchmark_matrix(lab):
     report = await lab.run_full_benchmark()
-    assert report.total_scenarios == 21  # 7 scenarios * 3 systems
+    assert report.total_scenarios == 7
+    assert report.total_runs == 21  # 7 scenarios * 3 systems
 
     summary = report.summary_by_system
     # Proposed APIL must have 100% pass rate

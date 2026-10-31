@@ -45,7 +45,8 @@ class ScenarioRunResult(BaseModel):
 
 
 class BenchmarkReport(BaseModel):
-    total_scenarios: int
+    total_scenarios: int  # distinct scenarios (A to G)
+    total_runs: int  # scenarios x systems evaluated
     timestamp: str
     summary_by_system: Dict[str, Dict[str, Any]]
     detailed_results: List[ScenarioRunResult]
@@ -712,7 +713,8 @@ class IntegrityLab:
             }
 
         return BenchmarkReport(
-            total_scenarios=len(results),
+            total_scenarios=len({r.scenario_id for r in results}),
+            total_runs=len(results),
             timestamp=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             summary_by_system=summary,
             detailed_results=results,

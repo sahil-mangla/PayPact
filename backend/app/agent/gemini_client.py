@@ -11,7 +11,9 @@ import json
 import logging
 import os
 import re
-from typing import Any, Dict, Optional
+import threading
+from datetime import datetime, timezone
+from typing import Any, Dict, List, Optional
 import httpx
 
 logger = logging.getLogger(__name__)
@@ -21,8 +23,43 @@ GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
 GEMINI_TIMEOUT = float(os.getenv("GEMINI_TIMEOUT", "8.0"))
 
 
+_budget_lock = threading.Lock()
+_budget_day = ""
+_budget_used = 0
+
+
 class GeminiClient:
     """Helper for Google Gemini API inference."""
+
+    @classmethod
+    def reset_daily_budget(cls) -> None:
+        global _budget_day, _budget_used
+        with _budget_lock:
+            _budget_day, _budget_used = "", 0
+
+    @classmethod
+    def _consume_daily_budget(cls) -> bool:
+        """Count one billable call against GEMINI_DAILY_CALL_LIMIT (default 500, 0 = unlimited).
+
+        A public demo has no per-user auth, so this caps what anonymous traffic can spend.
+        When the cap is hit callers fall back to the local/deterministic path.
+        """
+        global _budget_day, _budget_used
+        try:
+            limit = int(os.getenv("GEMINI_DAILY_CALL_LIMIT", "500"))
+        except ValueError:
+            limit = 500
+        if limit <= 0:
+            return True
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        with _budget_lock:
+            if _budget_day != today:
+                _budget_day, _budget_used = today, 0
+            if _budget_used >= limit:
+                logger.warning("Gemini daily call cap reached; using fallback.")
+                return False
+            _budget_used += 1
+            return True
 
     @classmethod
     def get_api_key(cls) -> str:
@@ -33,12 +70,16 @@ class GeminiClient:
         """Check if Gemini API key is configured and can reach Google Generative Language API."""
         key = cls.get_api_key()
         if not key:
-            return {"available": False, "reason": "No GEMINI_API_KEY set", "model": GEMINI_MODEL}
+            return {
+                "available": False,
+                "reason": "No GEMINI_API_KEY set",
+                "model": GEMINI_MODEL,
+            }
 
         try:
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}?key={key}"
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}"
             with httpx.Client(timeout=3.0) as client:
-                res = client.get(url)
+                res = client.get(url, headers={"x-goog-api-key": key})
                 if res.status_code == 200:
                     return {
                         "available": True,
@@ -58,7 +99,7 @@ class GeminiClient:
     def parse_intent(cls, user_prompt: str) -> Optional[Dict[str, Any]]:
         """Ask Gemini model to parse purchasing intent into structured parameters."""
         key = cls.get_api_key()
-        if not key:
+        if not key or not cls._consume_daily_budget():
             return None
 
         prompt = (
@@ -74,7 +115,7 @@ class GeminiClient:
             "Output ONLY valid JSON inside a ```json ``` block."
         )
 
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent?key={key}"
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
         payload = {
             "contents": [{"parts": [{"text": prompt}]}],
             "generationConfig": {
@@ -85,7 +126,9 @@ class GeminiClient:
 
         try:
             with httpx.Client(timeout=GEMINI_TIMEOUT) as client:
-                res = client.post(url, json=payload)
+                res = client.post(
+                    url, json=payload, headers={"x-goog-api-key": key}
+                )
                 if res.status_code == 200:
                     data = res.json()
                     candidates = data.get("candidates", [])
@@ -108,6 +151,47 @@ class GeminiClient:
         return None
 
     @classmethod
+    def chat_with_tools(
+        cls,
+        contents: List[Dict[str, Any]],
+        function_declarations: List[Dict[str, Any]],
+        system_instruction: str,
+        allowed_functions: Optional[List[str]] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """One function-calling turn. Returns the model's content dict, or None on any failure.
+
+        Mode ANY makes the model answer with a tool call rather than prose, so the agent
+        loop only ever has to handle structured calls. Each turn is one billable call.
+        """
+        key = cls.get_api_key()
+        if not key or not cls._consume_daily_budget():
+            return None
+
+        calling_config: Dict[str, Any] = {"mode": "ANY"}
+        if allowed_functions:
+            calling_config["allowedFunctionNames"] = allowed_functions
+        payload = {
+            "systemInstruction": {"parts": [{"text": system_instruction}]},
+            "contents": contents,
+            "tools": [{"functionDeclarations": function_declarations}],
+            "toolConfig": {"functionCallingConfig": calling_config},
+            "generationConfig": {"temperature": 0.1, "maxOutputTokens": 1200},
+        }
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
+        try:
+            with httpx.Client(timeout=GEMINI_TIMEOUT) as client:
+                res = client.post(url, json=payload, headers={"x-goog-api-key": key})
+            if res.status_code != 200:
+                logger.warning(f"Gemini tool turn failed: HTTP {res.status_code}")
+                return None
+            candidates = res.json().get("candidates", [])
+            content = candidates[0].get("content") if candidates else None
+            return content if isinstance(content, dict) else None
+        except Exception as e:
+            logger.warning(f"Gemini tool turn failed: {e}")
+            return None
+
+    @classmethod
     def generate_recommendation_rationale(
         cls,
         user_prompt: str,
@@ -116,10 +200,12 @@ class GeminiClient:
         unit_price: float,
         currency: str,
         product_desc: str,
+        verified_facts: Optional[List[str]] = None,
+        quantity: int = 1,
     ) -> Optional[str]:
         """Ask Gemini model to produce natural agent reasoning."""
         key = cls.get_api_key()
-        if not key:
+        if not key or not cls._consume_daily_budget():
             return None
 
         prompt = (
@@ -128,12 +214,16 @@ class GeminiClient:
             f"Selected product: {product_name}\n"
             f"Merchant: {product_merchant}\n"
             f"Price: {unit_price:.2f} {currency}\n"
-            f"Description: {product_desc}\n\n"
-            "Write a complete, professional 2-sentence rationale explaining why this product satisfies the user's intent "
-            "and respects their financial budget ceiling invariants. Always complete your thoughts and conclude with a period."
+            f"Description: {product_desc}\n"
+            f"Quantity: {quantity}\n"
+            f"Requirements the system verified: {'; '.join(verified_facts or []) or 'none stated'}\n\n"
+            "Write a complete, professional 2-sentence rationale explaining how this product fits the user's request "
+            "and their financial budget ceiling. State only facts that appear in the description or the verified list above. "
+            "Never claim a route, date, class, feature or any requirement that is not listed there. "
+            "Always complete your thoughts and conclude with a period."
         )
 
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent?key={key}"
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
         payload = {
             "contents": [{"parts": [{"text": prompt}]}],
             "generationConfig": {
@@ -144,7 +234,9 @@ class GeminiClient:
 
         try:
             with httpx.Client(timeout=GEMINI_TIMEOUT) as client:
-                res = client.post(url, json=payload)
+                res = client.post(
+                    url, json=payload, headers={"x-goog-api-key": key}
+                )
                 if res.status_code == 200:
                     data = res.json()
                     candidates = data.get("candidates", [])
@@ -163,15 +255,38 @@ class GeminiClient:
 
                         # Check for cut-off / dangling words at the end
                         dangling = {
-                            "that", "and", "or", "but", "with", "for", "to", "at",
-                            "by", "of", "in", "is", "a", "an", "the", "which",
-                            "as", "from", "on", "it", "so", "because"
+                            "that",
+                            "and",
+                            "or",
+                            "but",
+                            "with",
+                            "for",
+                            "to",
+                            "at",
+                            "by",
+                            "of",
+                            "in",
+                            "is",
+                            "a",
+                            "an",
+                            "the",
+                            "which",
+                            "as",
+                            "from",
+                            "on",
+                            "it",
+                            "so",
+                            "because",
                         }
                         words = cleaned.split()
-                        last_word = words[-1].lower().strip(".,;:?!\"'") if words else ""
+                        last_word = (
+                            words[-1].lower().strip(".,;:?!\"'") if words else ""
+                        )
 
                         if last_word in dangling:
-                            logger.warning(f"Detected cut-off LLM rationale: '{cleaned}'. Completing thought.")
+                            logger.warning(
+                                f"Detected cut-off LLM rationale: '{cleaned}'. Completing thought."
+                            )
                             cleaned = (
                                 cleaned.rstrip(" ,;:-")
                                 + f" delivers dependable performance while strictly satisfying your spending limits at {unit_price:.0f} {currency}."

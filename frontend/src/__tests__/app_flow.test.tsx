@@ -156,3 +156,245 @@ describe('End-to-End User Actions & Flow Test', () => {
     });
   });
 });
+
+describe('Attack simulator chips run in one click', () => {
+  const calls: Array<{ url: string; body: any }> = [];
+
+  beforeEach(() => {
+    calls.length = 0;
+    localStorage.clear();
+    global.fetch = vi.fn().mockImplementation((url: string, options?: any) => {
+      const body = options?.body ? JSON.parse(options.body) : undefined;
+      calls.push({ url, body });
+      if (url.includes('/health')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ status: 'healthy', paypal_mode: 'mock', ollama: {} }) });
+      }
+      if (url.includes('/authorizations')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve(MOCK_POLICY) });
+      }
+      if (url.includes('/proposals')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve(MOCK_PROPOSAL_RES) });
+      }
+      if (url.includes('/execute')) {
+        return Promise.resolve({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              session: { checkout_id: 'chk_flow_test_01', state: 'POLICY_REJECTED', failure_reason: 'Proposal details drifted after user approval was granted.', proposal: MOCK_PROPOSAL_RES.proposal },
+            }),
+        });
+      }
+      return Promise.resolve({ ok: true, json: () => Promise.resolve([]) });
+    });
+  });
+
+  it('a prompt-injection chip submits the request without a second click', async () => {
+    render(<Home />);
+    fireEvent.click(screen.getByText('Prompt Injection Bypass'));
+
+    await waitFor(() => {
+      const parse = calls.find((c) => c.url.includes('/authorizations/parse-intent'));
+      expect(parse?.body.prompt).toContain('Rolex');
+      expect(calls.some((c) => c.url.includes('/proposals'))).toBe(true);
+    });
+  });
+
+  it('a drift chip also fires the drifted execution so the block is shown', async () => {
+    render(<Home />);
+    fireEvent.click(screen.getByText('Stealth Shipping Drift (+₹850)'));
+
+    await waitFor(() => {
+      const exec = calls.find((c) => c.url.includes('/execute'));
+      expect(exec?.body.simulate_drift_type).toBe('price_drift');
+    });
+  });
+});
+
+describe('After payment: refunds, disputes and the quota panel', () => {
+  const calls: string[] = [];
+
+  beforeEach(() => {
+    calls.length = 0;
+    localStorage.clear();
+    let policy = { ...MOCK_POLICY };
+    global.fetch = vi.fn().mockImplementation((url: string, options?: any) => {
+      calls.push(`${options?.method || 'GET'} ${url}`);
+      const json = (body: any) => Promise.resolve({ ok: true, json: () => Promise.resolve(body) });
+      if (url.includes('/health')) return json({ status: 'healthy', paypal_mode: 'mock', ollama: {} });
+      if (url.includes('/authorizations/parse-intent') || (url.includes('/authorizations') && options?.method === 'POST')) {
+        return json(policy);
+      }
+      if (url.match(/\/authorizations\/[^/]+$/)) return json({ ...policy, spent_total: 3899 });
+      if (url.includes('/proposals')) return json(MOCK_PROPOSAL_RES);
+      if (url.includes('/execute')) {
+        return json({ session: { checkout_id: 'chk_flow_test_01', state: 'PAID', paypal_order_id: 'MOCK-ORD-1', paypal_capture_id: 'MOCK-CAP-1', proposal: MOCK_PROPOSAL_RES.proposal } });
+      }
+      if (url.includes('/webhooks/simulate')) {
+        const type = JSON.parse(options.body).event_type;
+        return json({ session: { checkout_id: 'chk_flow_test_01', state: type.includes('DISPUTE') ? 'DISPUTED' : 'REFUNDED', paypal_order_id: 'MOCK-ORD-1', paypal_capture_id: 'MOCK-CAP-1', proposal: MOCK_PROPOSAL_RES.proposal } });
+      }
+      return json([]);
+    });
+  });
+
+  async function payThenSimulate(label: string) {
+    render(<Home />);
+    fireEvent.click(screen.getByText('Generate Proposal & Check Rules'));
+    fireEvent.click(await screen.findByText('Execute Authorized Payment'));
+    fireEvent.click(await screen.findByText(label));
+  }
+
+  it('keeps the settled card and shows Refunded instead of offering to pay again', async () => {
+    await payThenSimulate('Simulate Refund Webhook');
+    expect(await screen.findByText('Payment Refunded')).toBeInTheDocument();
+    expect(screen.queryByText('Execute Authorized Payment')).not.toBeInTheDocument();
+    expect(screen.getByText(/Webhook confirmed/i)).toBeInTheDocument();
+  });
+
+  it('keeps the settled card and shows Disputed for a dispute', async () => {
+    await payThenSimulate('Simulate Dispute Webhook');
+    expect(await screen.findByText('Payment Disputed')).toBeInTheDocument();
+    expect(screen.queryByText('Execute Authorized Payment')).not.toBeInTheDocument();
+  });
+
+  it('reloads the policy after a payment so the quota panel is not stale', async () => {
+    render(<Home />);
+    fireEvent.click(screen.getByText('Generate Proposal & Check Rules'));
+    fireEvent.click(await screen.findByText('Execute Authorized Payment'));
+    await screen.findByText('Payment Settled Successfully');
+    await waitFor(() => {
+      expect(calls.some((c) => /^GET .*\/authorizations\/pol_/.test(c))).toBe(true);
+    });
+  });
+});
+
+describe('Decision explanation on the proposal card', () => {
+  it('explains an automatic approval in plain words with a single status badge', async () => {
+    localStorage.clear();
+    global.fetch = vi.fn().mockImplementation((url: string, options?: any) => {
+      const json = (b: any) => Promise.resolve({ ok: true, json: () => Promise.resolve(b) });
+      if (url.includes('/health')) return json({ status: 'healthy', paypal_mode: 'mock', ollama: {} });
+      if (url.includes('/authorizations')) return json(MOCK_POLICY);
+      if (url.includes('/proposals')) return json(MOCK_PROPOSAL_RES);
+      return json([]);
+    }) as any;
+    render(<Home />);
+    fireEvent.click(screen.getByText('Generate Proposal & Check Rules'));
+
+    const note = await screen.findByTestId('decision-note');
+    expect(note.textContent).toMatch(/within your .* auto-buy limit/);
+    expect(screen.getAllByText('Auto-Approved')).toHaveLength(1);
+    expect(screen.queryByText('Blocked')).not.toBeInTheDocument();
+  });
+});
+
+
+describe('Agent trace on the proposal card', () => {
+  const run = async (extra: any) => {
+    localStorage.clear();
+    global.fetch = vi.fn().mockImplementation((url: string) => {
+      const json = (b: any) => Promise.resolve({ ok: true, json: () => Promise.resolve(b) });
+      if (url.includes('/health')) return json({ status: 'healthy', paypal_mode: 'mock', ollama: {} });
+      if (url.includes('/authorizations')) return json(MOCK_POLICY);
+      if (url.includes('/proposals')) return json({ ...MOCK_PROPOSAL_RES, ...extra });
+      return json([]);
+    }) as any;
+    render(<Home />);
+    fireEvent.click(screen.getByText('Generate Proposal & Check Rules'));
+    await screen.findByTestId('decision-note');
+  };
+
+  it('lists the tool calls Gemini made to choose the product', async () => {
+    await run({
+      agent_mode: 'gemini_tools',
+      agent_trace: [
+        { tool: 'search_products', args: { query: 'keyboard' }, summary: 'Found: KB-Q1-PRO' },
+        { tool: 'choose_product', args: { sku: 'KB-Q1-PRO' }, summary: 'Chose product' },
+      ],
+    });
+    const trace = screen.getByTestId('agent-trace');
+    expect(trace.textContent).toContain('Gemini chose this in 2 tool calls');
+    expect(trace.textContent).toContain('search_products');
+    expect(trace.textContent).toContain('Found: KB-Q1-PRO');
+  });
+
+  it('says so when the verifier overrode the pick, and shows nothing without a trace', async () => {
+    await run({
+      agent_mode: 'deterministic',
+      agent_trace: [{ tool: 'verifier', args: { sku: 'TR-FLIGHT-BLR' }, summary: 'Rejected: does not satisfy the request' }],
+    });
+    expect(screen.getByTestId('agent-trace').textContent).toContain('Gemini’s pick was not used');
+  });
+
+  it('is absent when the deterministic agent ran alone', async () => {
+    await run({ agent_mode: 'deterministic', agent_trace: [] });
+    expect(screen.queryByTestId('agent-trace')).not.toBeInTheDocument();
+  });
+});
+
+
+describe('Honest status when things go wrong', () => {
+  it('shows a connection problem, not a security notice, when the backend is unreachable', async () => {
+    localStorage.clear();
+    global.fetch = vi.fn().mockRejectedValue(new TypeError('Failed to fetch')) as any;
+    render(<Home />);
+    fireEvent.click(screen.getByText('Generate Proposal & Check Rules'));
+
+    expect(await screen.findByText('Connection problem')).toBeInTheDocument();
+    expect(screen.getAllByText(/can't reach the server/i).length).toBeGreaterThan(0);
+    expect(screen.queryByText('Security & Policy Notice')).not.toBeInTheDocument();
+    expect(screen.queryByText('System Ready')).not.toBeInTheDocument();
+  });
+
+  it('does not describe the prompt-injection chip as something PayPact "rejects" outright', async () => {
+    localStorage.clear();
+    global.fetch = vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve({}) }) as any;
+    render(<Home />);
+    expect(screen.getByText('Prompt Injection Bypass')).toBeInTheDocument();
+    fireEvent.click(screen.getByText('Prompt Injection Bypass'));
+    expect(await screen.findByText(/isn't in the catalogue|not in the catalogue/i)).toBeInTheDocument();
+  });
+});
+
+describe('Receipt dialog', () => {
+  function mockFlow(decision: 'ALLOW' | 'REJECT_OR_BLOCKED') {
+    localStorage.clear();
+    global.fetch = vi.fn().mockImplementation((url: string, options?: any) => {
+      const json = (b: any) => Promise.resolve({ ok: true, json: () => Promise.resolve(b) });
+      if (url.includes('/health')) return json({ status: 'healthy', paypal_mode: 'mock', ollama: {} });
+      if (url.includes('/receipt/verify')) return json({ valid: true, receipt_id: 'r1', checkout_id: 'c1', algorithm: 'HMAC-SHA256', signer: 's' });
+      if (url.includes('/receipt')) return json({ ...SAMPLE_RECEIPT, decision });
+      if (url.includes('/authorizations')) return json(MOCK_POLICY);
+      if (url.includes('/proposals')) return json(MOCK_PROPOSAL_RES);
+      if (url.includes('/execute')) {
+        return json({ session: { checkout_id: 'chk_flow_test_01', state: 'PAID', paypal_order_id: 'MOCK-ORD-1', paypal_capture_id: 'MOCK-CAP-1', proposal: MOCK_PROPOSAL_RES.proposal } });
+      }
+      return json([]);
+    }) as any;
+  }
+
+  async function openReceipt() {
+    render(<Home />);
+    fireEvent.click(screen.getByText('Generate Proposal & Check Rules'));
+    fireEvent.click(await screen.findByText('Execute Authorized Payment'));
+    fireEvent.click(await screen.findByText('Verify Audit Signature'));
+    return screen.findByRole('dialog');
+  }
+
+  it('is a labelled dialog that takes focus and closes on Escape', async () => {
+    mockFlow('ALLOW');
+    const dialog = await openReceipt();
+    expect(dialog).toHaveAttribute('aria-modal', 'true');
+    expect(dialog).toHaveAccessibleName('Payment Audit Receipt');
+    await waitFor(() => expect(document.activeElement).toBe(dialog));
+
+    fireEvent.keyDown(window, { key: 'Escape' });
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+  });
+
+  it('calls a record of a refused purchase a refusal record, not a payment receipt', async () => {
+    mockFlow('REJECT_OR_BLOCKED');
+    const dialog = await openReceipt();
+    expect(dialog).toHaveAccessibleName('Refusal Record');
+  });
+});

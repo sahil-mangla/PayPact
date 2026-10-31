@@ -151,3 +151,93 @@ describe('Dashboard Tab Switching & Integrity Lab', () => {
     expect(textarea.value).toContain('brass keyboard desk mat');
   });
 });
+
+describe('Integrity Lab failures are shown, not swallowed', () => {
+  it('shows the server reason when the benchmark run fails', async () => {
+    localStorage.clear();
+    global.fetch = vi.fn().mockImplementation((url: string) => {
+      if (url.includes('/lab/run')) {
+        return Promise.resolve({
+          ok: false,
+          status: 500,
+          json: () => Promise.resolve({ detail: 'Benchmark engine unavailable' }),
+        });
+      }
+      if (url.includes('/health')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ status: 'healthy', paypal_mode: 'mock', ollama: {} }) });
+      }
+      return Promise.resolve({ ok: true, json: () => Promise.resolve([]) });
+    }) as any;
+
+    render(<Home />);
+    fireEvent.click(screen.getByText('Policy Test Lab'));
+
+    expect(await screen.findByText(/Benchmark engine unavailable/i)).toBeInTheDocument();
+  });
+
+  it('does not invent benchmark numbers when no run has succeeded', async () => {
+    localStorage.clear();
+    global.fetch = vi.fn().mockImplementation((url: string) => {
+      if (url.includes('/lab/run')) {
+        return Promise.resolve({ ok: false, status: 500, json: () => Promise.resolve({ detail: 'down' }) });
+      }
+      if (url.includes('/health')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ status: 'healthy', paypal_mode: 'mock', ollama: {} }) });
+      }
+      return Promise.resolve({ ok: true, json: () => Promise.resolve([]) });
+    }) as any;
+
+    render(<Home />);
+    fireEvent.click(screen.getByText('Policy Test Lab'));
+    await screen.findByText(/Policy Enforcement Test Lab/i);
+
+    expect(screen.queryByText('100.0%')).not.toBeInTheDocument();
+    expect(screen.queryByText('14.3%')).not.toBeInTheDocument();
+    expect(screen.getByText('Policy Pass Rate').previousSibling?.textContent).toBe('—');
+  });
+});
+
+
+describe('Integrity Lab figures come from the real report', () => {
+  it('renders the summary and comparison table from /lab/run results', async () => {
+    localStorage.clear();
+    const summary = (pass: number, unauth: number, lat: number) => ({
+      total_scenarios: 7,
+      passed_scenarios: 0,
+      pass_rate_pct: pass,
+      unauthorized_spend_count: unauth,
+      avg_latency_ms: lat,
+    });
+    global.fetch = vi.fn().mockImplementation((url: string) => {
+      if (url.includes('/lab/run')) {
+        return Promise.resolve({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              benchmark_report: {
+                summary_by_system: {
+                  BASELINE_A: summary(11.1, 8, 0.31),
+                  BASELINE_B: summary(66.6, 2, 0.32),
+                  PROPOSED_APIL: summary(88.8, 1, 0.33),
+                },
+                detailed_results: [],
+              },
+            }),
+        });
+      }
+      if (url.includes('/health')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ status: 'healthy', paypal_mode: 'mock', ollama: {} }) });
+      }
+      return Promise.resolve({ ok: true, json: () => Promise.resolve([]) });
+    }) as any;
+
+    render(<Home />);
+    fireEvent.click(screen.getByText('Policy Test Lab'));
+
+    // Selected system defaults to PayPact: the cards and its table row use that run's numbers.
+    expect(await screen.findAllByText('88.8%')).not.toHaveLength(0);
+    expect(screen.getByText('11.1%')).toBeInTheDocument();
+    expect(screen.getByText('66.6%')).toBeInTheDocument();
+    expect(screen.getByText('0.31 ms')).toBeInTheDocument();
+  });
+});
