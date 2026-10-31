@@ -187,7 +187,7 @@ The sandbox does not support INR, so INR amounts are converted to USD at a fixed
 | `PAYPAL_BASE_URL` | `https://api-m.sandbox.paypal.com` | The backend refuses any non-sandbox URL unless `ALLOW_LIVE_PAYPAL=true`. |
 | `PAYPAL_WEBHOOK_ID` | unset | Required for `POST /api/webhooks/paypal`; without it every delivery is refused. |
 | `APIL_SIGNING_SECRET` | random per process | HMAC key for audit receipts. Set it to keep receipts verifiable across restarts. |
-| `GEMINI_API_KEY` | unset | Enables Gemini for intent parsing and the recommendation rationale. |
+| `GEMINI_API_KEY` | unset | Enables Gemini for intent parsing and for choosing the product through function calls. |
 | `GEMINI_DAILY_CALL_LIMIT` | `500` | Daily cap on Gemini calls; past it the app falls back to local or deterministic parsing. `0` disables the cap. |
 | `LLM_RATE_LIMIT_PER_MINUTE` | `30` | Per-client limit on the two endpoints that call an LLM. `0` disables it. |
 | `ENABLE_WEBHOOK_SIMULATION` | unset | `/api/webhooks/simulate` always works in mock mode; against live PayPal it is off unless this is `true`. |
@@ -202,10 +202,10 @@ The agent only buys what the nine-item catalogue actually contains, so a request
 ### Test suites
 
 ```bash
-# Backend: 222 tests (policy, state machine, webhooks, API, agent, crypto, benchmark)
+# Backend: 235 tests (policy, state machine, webhooks, API, agent, crypto, benchmark)
 cd backend && source .venv/bin/activate && pytest -q
 
-# Frontend: 60 tests, plus lint, typecheck and a production build
+# Frontend: 63 tests, plus lint, typecheck and a production build
 cd frontend && npm test && npm run lint && npm run typecheck && npm run build
 ```
 
@@ -241,7 +241,7 @@ PayPact is configured for deployment on [Render](https://render.com) using the I
    - `NEXT_PUBLIC_PAYPAL_CLIENT_ID` (frontend): the same client ID, for the PayPal checkout buttons.
    - `PAYPAL_WEBHOOK_ID`: Webhook ID from the PayPal dashboard. `POST /api/webhooks/paypal` verifies every delivery through PayPal's signature API and refuses all of them until this is set.
    - `APIL_SIGNING_SECRET`: Generated automatically by the blueprint; signs the audit receipts.
-   - `GEMINI_API_KEY`: Enables Gemini for intent parsing and recommendation rationale (see Section 8). Calls are capped per day (`GEMINI_DAILY_CALL_LIMIT`) and the LLM endpoints are rate limited per client, because the hosted demo has no user accounts.
+   - `GEMINI_API_KEY`: Enables Gemini for intent parsing and for choosing the product through function calls (see Section 8). Calls are capped per day (`GEMINI_DAILY_CALL_LIMIT`) and the LLM endpoints are rate limited per client, because the hosted demo has no user accounts.
    - `ENABLE_WEBHOOK_SIMULATION`: leave unset on a public deployment. The simulated-webhook endpoint fabricates PayPal events, so against live PayPal it stays off unless this is `true`.
    - Free-tier services sleep when idle; the first request after a pause can take about a minute, and the UI says so.
 5. Click **Apply**. Both services will build, test, and deploy with HTTPS enabled.
@@ -287,12 +287,13 @@ The application provides a clean fintech interface with floating pill navigation
 |:---|:---|
 | **PayPal Orders v2 API (Sandbox)** | Creates and captures real sandbox orders with `PayPal-Request-Id` idempotency, reconciles ambiguous timeouts via `GET /v2/checkout/orders/{id}`, and verifies webhook deliveries through `verify-webhook-signature`. |
 | **PayPal JS SDK (`@paypal/react-paypal-js`)** | Buyer approval popup. The order is created server-side after the gate passes, and the capture endpoint re-runs the gate (revocation, expiry, fingerprint) and checks the captured amount before a checkout can become PAID. |
-| **Google Gemini (`gemini-2.5-flash`)** | Turns a natural-language purchase goal into structured constraints (budget, category, currency) and writes the recommendation rationale. Used when `GEMINI_API_KEY` is set. |
-| **Ollama (`qwen2.5-coder:7b`)** | Local fallback for the same two jobs when Gemini is unavailable. |
+| **Google Gemini (`gemini-2.5-flash`)** | Turns a natural-language purchase goal into structured constraints (budget, category, currency), then chooses the product by calling `search_products`, `get_product` and `choose_product`. Used when `GEMINI_API_KEY` is set. |
+| **Ollama (`qwen2.5-coder:7b`)** | Local fallback for intent parsing and the recommendation text when Gemini is unavailable. It does not choose products. |
 | **Deterministic parser** | Final fallback, so the app and the test suite run with no AI service at all. |
 
 The LLM only proposes. It never sees PayPal credentials and has no network path to PayPal; the deterministic policy engine decides what is executed. The AI's role is deliberately narrow:
 - It turns the user's sentence into policy numbers, and a number is accepted only if the user actually typed it. A budget the model invents is ignored.
+- It chooses the product through tool calls. The SKU must have been returned by a tool, must satisfy the request and the agent's category, and is priced from the catalogue. Otherwise the deterministic ranking decides, and the UI shows the tool calls and any override.
 - It writes the recommendation text. That text is dropped if it cites a price or SKU that is not in the verified proposal.
 - It does not choose the product. Matching against the catalogue is deterministic and ignores merchant-written descriptions.
 
@@ -316,7 +317,7 @@ The LLM only proposes. It never sees PayPal credentials and has no network path 
 - **State is in memory.** Policies, checkouts and the audit ledger reset on a restart or a free-tier sleep. The ledger is hash-chained, but nothing anchors its head outside the process.
 - **Drift is simulated.** There is no real merchant feed. The attack chips inject price drift and SKU substitution at execute time to show the gate catching it.
 - **No user accounts, so approval is a convention.** Anyone who can reach a deployment can use it, including calling the approve endpoint with any user id, and the audit tab lists the whole instance's events. Rate limits and a daily Gemini cap bound the cost. Real use would need authentication, an approval step the agent cannot call, and per-user scoping.
-- **The AI is a small part of the system.** Gemini (or Ollama, or a regex fallback) parses the sentence into policy numbers and writes the explanation. Remove it and only the wording changes. This is deliberate: the model has no say over what is bought or paid.
+- **The model chooses what to propose, not what is allowed.** With `GEMINI_API_KEY` set, Gemini picks the product through function calls (`search_products`, `get_product`, `choose_product`). Its pick is accepted only if it is a SKU a tool returned and it satisfies the request and the agent's category; it is priced from the catalogue, and the deterministic policy gate then approves or blocks it. Without a key, or if Gemini fails or is overruled, a deterministic ranking picks instead. Intent parsing is still a single Gemini call with a regex fallback. This loop is tested against a scripted fake Gemini; it has not yet been run against the live API.
 - **A capture whose amount differs from the approval is flagged, not refunded.** The checkout is marked failed with a ledger entry and the capture id, and needs manual review in PayPal.
 - **Receipts use HMAC.** They are tamper-evident to the server that holds the key, not independently verifiable. Receipts do not carry a key ID, so rotating `APIL_SIGNING_SECRET` invalidates old ones.
 - **Small fixed catalogue.** Nine fixture products (including one adversarial listing) stand in for merchants.

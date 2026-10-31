@@ -250,7 +250,7 @@ The application will feature a unified, modern web interface with two primary vi
 - **Backend:** FastAPI (Python 3.11+), Pydantic v2, HTTPX for the PayPal REST calls, pytest. All state (policies, checkouts, the audit ledger) is in memory.
 - **Frontend:** Next.js 14 (App Router, TypeScript), inline styles plus a small global stylesheet, Lucide icons, `@paypal/react-paypal-js` for the PayPal buttons, Vitest and Testing Library.
 - **Payment Gateway:** PayPal Orders API v2 (sandbox) with `PayPal-Request-Id` idempotency, order lookup for timeout reconciliation, and webhook verification through `verify-webhook-signature`. Without credentials the client runs in an offline mock mode.
-- **AI Core:** Gemini (`gemini-2.5-flash`) when `GEMINI_API_KEY` is set, otherwise a local Ollama model, otherwise a deterministic parser. The model parses intent and writes the rationale; product selection and every payment decision are deterministic.
+- **AI Core:** Gemini (`gemini-2.5-flash`) when `GEMINI_API_KEY` is set, otherwise a local Ollama model, otherwise a deterministic parser. The model parses intent and, through function calls (`search_products`, `get_product`, `choose_product`), picks the product. The pick is re-verified against the request and the agent's category and priced from the catalogue; every payment decision is deterministic.
 
 ### Repository Layout
 ```text
