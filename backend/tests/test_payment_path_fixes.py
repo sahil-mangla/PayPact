@@ -419,3 +419,36 @@ async def test_execute_after_the_popup_was_closed_returns_the_same_order(monkeyp
     assert again.state.value == "CHECKOUT_CREATED"
     assert again.paypal_order_id == first_order
     assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_pending_checkouts_count_against_the_budget():
+    """Two checkouts that each fit the budget must not both be allowed to start paying."""
+    from app.api.routers import coordinator
+
+    async with _client() as client:
+        intent = (
+            await client.post(
+                "/api/authorizations/parse-intent", json={"prompt": AUTO_PROMPT}
+            )
+        ).json()
+        policy = (await client.post("/api/authorizations", json=intent)).json()
+        ids = []
+        for _ in range(2):
+            proposal = await client.post(
+                "/api/proposals",
+                json={
+                    "prompt": "Keychron K2 wireless mechanical keyboard",
+                    "policy_id": policy["policy_id"],
+                },
+            )
+            ids.append(proposal.json()["checkout_id"])
+
+    first = await coordinator.create_paypal_order_only(ids[0])
+    second = await coordinator.create_paypal_order_only(ids[1])
+
+    assert first.state.value == "CHECKOUT_CREATED"
+    assert first.proposal.total_amount * 2 > policy["maximum_total"]
+    assert second.state.value == "POLICY_REJECTED"
+    assert "pending" in second.failure_reason.lower()
+    assert second.paypal_order_id is None

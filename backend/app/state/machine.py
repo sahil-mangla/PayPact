@@ -2,6 +2,7 @@ import asyncio
 import math
 import re
 import uuid
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional
 from pydantic import BaseModel, Field
 
@@ -23,6 +24,14 @@ from app.policy.engine import DeterministicPolicyEngine
 # PayPal order ids are short alphanumeric tokens; anything else never reaches a PayPal URL.
 ORDER_ID_RE = re.compile(r"[A-Za-z0-9-]{1,64}")
 
+# A checkout that started paying but never settled holds its budget for this long.
+PENDING_RESERVATION_TTL = timedelta(minutes=15)
+_PENDING_STATES = (
+    TransactionState.PAYMENT_PENDING,
+    TransactionState.CHECKOUT_CREATED,
+    TransactionState.RECONCILIATION_REQUIRED,
+)
+
 
 class CheckoutSession(BaseModel):
     checkout_id: str
@@ -38,6 +47,7 @@ class CheckoutSession(BaseModel):
     failure_reason: Optional[str] = None
     reconciliation_data: Optional[Dict] = None
     refunded_total: float = 0.0
+    pending_since: Optional[datetime] = None
 
 
 class TransactionCoordinator:
@@ -61,6 +71,67 @@ class TransactionCoordinator:
         if checkout_id not in self._execution_locks:
             self._execution_locks[checkout_id] = asyncio.Lock()
         return self._execution_locks[checkout_id]
+
+    def _reserve_budget(
+        self, session: CheckoutSession, policy: AuthorizationPolicy
+    ) -> Optional[str]:
+        """Reserve this checkout's amount, or return why the budget cannot cover it.
+
+        Spend is only recorded once PayPal captures, so two checkouts that each fit the budget
+        could otherwise both start paying. Checkouts already mid-payment count as spent.
+        Runs without awaiting, so check-and-reserve is atomic on the event loop.
+        """
+        now = datetime.now(timezone.utc)
+        agent_id = session.proposal.agent_id
+        pending_total = 0.0
+        pending_agent = 0.0
+        for other in self._sessions.values():
+            if (
+                other.checkout_id == session.checkout_id
+                or other.policy_id != session.policy_id
+                or other.state not in _PENDING_STATES
+                or other.pending_since is None
+                or now - other.pending_since > PENDING_RESERVATION_TTL
+            ):
+                continue
+            pending_total += other.proposal.total_amount
+            if agent_id and other.proposal.agent_id == agent_id:
+                pending_agent += other.proposal.total_amount
+
+        amount = session.proposal.total_amount
+        remaining = round(policy.maximum_total - policy.spent_total - pending_total, 2)
+        if amount > remaining:
+            return (
+                f"Exceeds remaining budget once pending checkouts are counted "
+                f"({amount:.2f} > {max(remaining, 0.0):.2f})."
+            )
+        quota = (policy.agent_quotas or {}).get(agent_id) if agent_id else None
+        if quota is not None:
+            quota_left = round(quota.remaining_budget - pending_agent, 2)
+            if amount > quota_left:
+                return (
+                    f"Exceeds agent '{quota.agent_name}' quota once pending checkouts are "
+                    f"counted ({amount:.2f} > {max(quota_left, 0.0):.2f})."
+                )
+
+        session.state = TransactionState.PAYMENT_PENDING
+        session.pending_since = now
+        return None
+
+    def _block_for_budget(
+        self, session: CheckoutSession, policy: AuthorizationPolicy, reason: str
+    ) -> CheckoutSession:
+        session.state = TransactionState.POLICY_REJECTED
+        session.failure_reason = reason
+        self.audit_ledger.record_event(
+            event_type="PRE_EXECUTION_BLOCKED",
+            checkout_id=session.checkout_id,
+            policy_version=policy.version,
+            proposal_fingerprint=session.proposal.proposal_fingerprint,
+            decision=PolicyDecisionType.REJECT.value,
+            reason=reason,
+        )
+        return session
 
     def register_policy(self, policy: AuthorizationPolicy) -> AuthorizationPolicy:
         self._policies[policy.policy_id] = policy
@@ -267,6 +338,10 @@ class TransactionCoordinator:
             # approved, never data that came in with the execute request.
             live_proposal = session.proposal
 
+            reason = self._reserve_budget(session, policy)
+            if reason:
+                return self._block_for_budget(session, policy, reason)
+
             # 3. Create PayPal Order
             req_id = idempotency_key or session.idempotency_key
             try:
@@ -411,6 +486,10 @@ class TransactionCoordinator:
                     reason="Timeout during payment creation/capture. Marked for reconciliation without blind retry.",
                 )
                 return session
+
+            reason = self._reserve_budget(session, policy)
+            if reason:
+                return self._block_for_budget(session, policy, reason)
 
             # Create PayPal order (no capture yet)
             req_id = session.idempotency_key
