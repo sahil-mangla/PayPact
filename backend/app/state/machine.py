@@ -732,20 +732,31 @@ class TransactionCoordinator:
                 return chk_id
         return None
 
-    @staticmethod
-    def _parse_refund_amount(resource: Dict[str, Any], default: float) -> Optional[float]:
-        """Positive finite refund amount, or None when the payload is unusable."""
-        amount_dict = resource.get("amount") or {}
-        raw = amount_dict.get("value")
+    def _refund_in_budget_currency(
+        self, session: CheckoutSession, resource: Dict[str, Any], default: float
+    ) -> Optional[float]:
+        """Refund size in the proposal's own currency, or None when it cannot be trusted.
+
+        PayPal reports a refund in the currency it charged (USD for an INR proposal in the
+        sandbox), while the budget is tracked in the proposal's currency. Expressing the refund
+        as a fraction of the charge converts it without a second exchange rate.
+        """
+        amount = resource.get("amount") or {}
+        raw = amount.get("value")
         if raw is None:
             return default
+        charge_currency, charge_total = self.paypal_client.expected_charge(
+            session.proposal
+        )
+        if (amount.get("currency_code") or charge_currency) != charge_currency:
+            return None
         try:
             value = float(raw)
         except (TypeError, ValueError):
             return None
-        if not math.isfinite(value) or value <= 0:
+        if not math.isfinite(value) or value <= 0 or charge_total <= 0:
             return None
-        return round(value, 2)
+        return round(value / charge_total * session.proposal.total_amount, 2)
 
     async def process_webhook_event(
         self,
@@ -800,7 +811,7 @@ class TransactionCoordinator:
         if session.state != TransactionState.PAID:
             return
         outstanding = round(session.proposal.total_amount - session.refunded_total, 2)
-        requested = self._parse_refund_amount(resource, default=outstanding)
+        requested = self._refund_in_budget_currency(session, resource, default=outstanding)
         if requested is None:
             return
         credit = min(requested, outstanding)

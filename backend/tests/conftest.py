@@ -43,3 +43,10 @@ def fresh_rate_limits():
     llm_limiter.reset()
     GeminiClient.reset_daily_budget()
     yield
+
+
+@pytest.fixture(autouse=True)
+def fresh_webhook_dedupe():
+    """The coordinator is a process-wide singleton; forget which webhook events it has applied."""
+    coordinator._seen_webhook_events.clear()
+    yield
