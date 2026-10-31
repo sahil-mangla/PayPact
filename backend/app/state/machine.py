@@ -1,4 +1,5 @@
 import asyncio
+import math
 import re
 import uuid
 from typing import Any, Dict, Optional
@@ -36,6 +37,7 @@ class CheckoutSession(BaseModel):
     idempotency_key: str = Field(default_factory=lambda: str(uuid.uuid4()))
     failure_reason: Optional[str] = None
     reconciliation_data: Optional[Dict] = None
+    refunded_total: float = 0.0
 
 
 class TransactionCoordinator:
@@ -52,6 +54,8 @@ class TransactionCoordinator:
         self._policies: Dict[str, AuthorizationPolicy] = {}
         self._idempotency_map: Dict[str, str] = {}  # idempotency_key -> checkout_id
         self._execution_locks: Dict[str, asyncio.Lock] = {}
+        # Webhook event ids already applied (insertion-ordered, bounded) so redelivery is a no-op.
+        self._seen_webhook_events: Dict[str, None] = {}
 
     def _get_execution_lock(self, checkout_id: str) -> asyncio.Lock:
         if checkout_id not in self._execution_locks:
@@ -598,58 +602,122 @@ class TransactionCoordinator:
                 quota = policy.agent_quotas[agent_id]
                 quota.spent_budget = round(max(0.0, quota.spent_budget - amount), 2)
 
+    def _find_checkout_for_resource(self, resource: Dict[str, Any]) -> Optional[str]:
+        """Match a PayPal webhook resource to a checkout by order or capture id.
+
+        PAYMENT.CAPTURE.REFUNDED carries the refund's own id in `resource.id`; the order
+        and capture it belongs to are in `supplementary_data` and the `up` link.
+        """
+        candidates = {resource.get("id"), resource.get("order_id")}
+        related = (resource.get("supplementary_data") or {}).get("related_ids") or {}
+        candidates.add(related.get("order_id"))
+        for link in resource.get("links") or []:
+            if isinstance(link, dict) and link.get("rel") == "up":
+                href = str(link.get("href") or "")
+                candidates.add(href.rstrip("/").rsplit("/", 1)[-1])
+        candidates.discard(None)
+        candidates.discard("")
+        for chk_id, sess in self._sessions.items():
+            if (
+                sess.paypal_order_id in candidates
+                or sess.paypal_capture_id in candidates
+            ):
+                return chk_id
+        return None
+
+    @staticmethod
+    def _parse_refund_amount(resource: Dict[str, Any], default: float) -> Optional[float]:
+        """Positive finite refund amount, or None when the payload is unusable."""
+        amount_dict = resource.get("amount") or {}
+        raw = amount_dict.get("value")
+        if raw is None:
+            return default
+        try:
+            value = float(raw)
+        except (TypeError, ValueError):
+            return None
+        if not math.isfinite(value) or value <= 0:
+            return None
+        return round(value, 2)
+
     async def process_webhook_event(
         self,
         event_type: str,
         resource: Dict[str, Any],
         checkout_id: Optional[str] = None,
         summary: Optional[str] = None,
+        event_id: Optional[str] = None,
     ) -> Optional[CheckoutSession]:
         """Process asynchronous PayPal webhook events (refunds, disputes, reversals)."""
-        target_checkout_id = checkout_id
-        if not target_checkout_id:
-            order_id = resource.get("id") or resource.get("order_id")
-            for chk_id, sess in self._sessions.items():
-                if (
-                    sess.paypal_order_id == order_id
-                    or sess.paypal_capture_id == order_id
-                ):
-                    target_checkout_id = chk_id
-                    break
-
+        target_checkout_id = checkout_id or self._find_checkout_for_resource(resource)
         if not target_checkout_id or target_checkout_id not in self._sessions:
             return None
 
         session = self._sessions[target_checkout_id]
         policy = self._policies.get(session.policy_id)
 
-        if event_type in ("PAYMENT.CAPTURE.REFUNDED", "PAYMENT.SALE.REFUNDED"):
-            session.state = TransactionState.REFUNDED
-            amount_dict = resource.get("amount") or {}
-            amount_val = float(
-                amount_dict.get("value") or session.proposal.total_amount
-            )
-            self._record_refund(
-                policy_id=session.policy_id,
-                amount=amount_val,
-                agent_id=session.proposal.agent_id,
-            )
-            self.audit_ledger.record_event(
-                event_type="PAYMENT_REFUNDED",
-                checkout_id=target_checkout_id,
-                policy_version=policy.version if policy else None,
-                reason=summary
-                or f"Payment refunded for checkout {target_checkout_id}: {amount_val}",
-            )
-        elif event_type in ("CUSTOMER.DISPUTE.CREATED", "PAYMENT.CAPTURE.REVERSED"):
-            session.state = TransactionState.DISPUTED
-            self.audit_ledger.record_event(
-                event_type="PAYMENT_DISPUTED",
-                checkout_id=target_checkout_id,
-                policy_version=policy.version if policy else None,
-                reason=summary or f"Payment disputed via PayPal webhook: {event_type}",
-            )
+        # PayPal redelivers webhooks, and anyone can replay a captured one: apply each event once.
+        if event_id:
+            if event_id in self._seen_webhook_events:
+                return session
+            self._seen_webhook_events[event_id] = None
+            if len(self._seen_webhook_events) > 10_000:
+                self._seen_webhook_events.pop(next(iter(self._seen_webhook_events)))
+
+        async with self._get_execution_lock(target_checkout_id):
+            if event_type in ("PAYMENT.CAPTURE.REFUNDED", "PAYMENT.SALE.REFUNDED"):
+                self._apply_refund(session, policy, resource, summary)
+            elif event_type in (
+                "CUSTOMER.DISPUTE.CREATED",
+                "PAYMENT.CAPTURE.REVERSED",
+            ):
+                if session.state == TransactionState.PAID:
+                    session.state = TransactionState.DISPUTED
+                    self.audit_ledger.record_event(
+                        event_type="PAYMENT_DISPUTED",
+                        checkout_id=target_checkout_id,
+                        policy_version=policy.version if policy else None,
+                        reason=summary
+                        or f"Payment disputed via PayPal webhook: {event_type}",
+                    )
         return session
+
+    def _apply_refund(
+        self,
+        session: CheckoutSession,
+        policy: Optional[AuthorizationPolicy],
+        resource: Dict[str, Any],
+        summary: Optional[str],
+    ) -> None:
+        # Money can only come back for a checkout that actually captured it.
+        if session.state != TransactionState.PAID:
+            return
+        outstanding = round(session.proposal.total_amount - session.refunded_total, 2)
+        requested = self._parse_refund_amount(resource, default=outstanding)
+        if requested is None:
+            return
+        credit = min(requested, outstanding)
+        if credit <= 0:
+            return
+
+        session.refunded_total = round(session.refunded_total + credit, 2)
+        self._record_refund(
+            policy_id=session.policy_id,
+            amount=credit,
+            agent_id=session.proposal.agent_id,
+        )
+        fully_refunded = session.refunded_total >= session.proposal.total_amount
+        if fully_refunded:
+            session.state = TransactionState.REFUNDED
+        self.audit_ledger.record_event(
+            event_type="PAYMENT_REFUNDED"
+            if fully_refunded
+            else "PAYMENT_PARTIALLY_REFUNDED",
+            checkout_id=session.checkout_id,
+            policy_version=policy.version if policy else None,
+            reason=summary
+            or f"Payment refunded for checkout {session.checkout_id}: {credit}",
+        )
 
     def generate_audit_receipt(self, checkout_id: str) -> SignedAuditReceipt:
         """Generate tamper-evident, digitally signed audit receipt for a checkout session."""

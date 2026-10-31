@@ -233,3 +233,101 @@ async def test_reconcile_aborts_cleanly_when_no_order_was_ever_created():
     result = await coordinator.reconcile_timeout(checkout_id)
     assert result.state.value == "FAILED"
     assert coordinator.get_policy(result.policy_id).spent_total == 0
+
+
+async def _paid_checkout(prompt: str = AUTO_PROMPT):
+    coordinator, session = await _checkout_with_order(prompt)
+    paid = await coordinator.capture_approved_order(
+        session.checkout_id, session.paypal_order_id
+    )
+    assert paid.state.value == "PAID"
+    return coordinator, paid
+
+
+def _refund(amount: float, capture_id: str):
+    return {"id": "REFUND-1", "amount": {"value": f"{amount:.2f}", "currency_code": "INR"},
+            "links": [{"rel": "up", "href": f"https://api.sandbox.paypal.com/v2/payments/captures/{capture_id}"}]}
+
+
+@pytest.mark.asyncio
+async def test_replayed_refund_event_is_credited_once():
+    coordinator, paid = await _paid_checkout()
+    policy = coordinator.get_policy(paid.policy_id)
+    before = policy.spent_total
+    resource = _refund(100.0, paid.paypal_capture_id)
+
+    for _ in range(3):
+        await coordinator.process_webhook_event(
+            "PAYMENT.CAPTURE.REFUNDED", resource, event_id="WH-EVT-1"
+        )
+    assert policy.spent_total == round(before - 100.0, 2)
+
+
+@pytest.mark.asyncio
+async def test_refunds_are_capped_at_the_amount_that_was_paid():
+    coordinator, paid = await _paid_checkout()
+    policy = coordinator.get_policy(paid.policy_id)
+    total = paid.proposal.total_amount
+
+    for i in range(4):
+        await coordinator.process_webhook_event(
+            "PAYMENT.CAPTURE.REFUNDED",
+            _refund(total, paid.paypal_capture_id),
+            event_id=f"WH-EVT-{i}",
+        )
+    assert policy.spent_total == 0.0
+    assert coordinator.get_session(paid.checkout_id).state.value == "REFUNDED"
+
+
+@pytest.mark.asyncio
+async def test_partial_refund_keeps_the_checkout_paid():
+    coordinator, paid = await _paid_checkout()
+    updated = await coordinator.process_webhook_event(
+        "PAYMENT.CAPTURE.REFUNDED",
+        _refund(100.0, paid.paypal_capture_id),
+        event_id="WH-EVT-P",
+    )
+    assert updated.state.value == "PAID"
+
+
+@pytest.mark.asyncio
+async def test_refund_for_an_unpaid_checkout_is_ignored():
+    coordinator, session = await _checkout_with_order(AUTO_PROMPT)
+    policy = coordinator.get_policy(session.policy_id)
+    await coordinator.process_webhook_event(
+        "PAYMENT.CAPTURE.REFUNDED",
+        {"id": session.paypal_order_id, "amount": {"value": "50.00"}},
+        checkout_id=session.checkout_id,
+    )
+    assert coordinator.get_session(session.checkout_id).state.value == "CHECKOUT_CREATED"
+    assert policy.spent_total == 0.0
+
+
+@pytest.mark.asyncio
+async def test_real_paypal_refund_payload_is_matched_to_its_checkout():
+    coordinator, paid = await _paid_checkout()
+    payload = {
+        "id": "REFUND-XYZ",
+        "amount": {"value": f"{paid.proposal.total_amount:.2f}", "currency_code": "INR"},
+        "supplementary_data": {"related_ids": {"order_id": paid.paypal_order_id}},
+    }
+    updated = await coordinator.process_webhook_event(
+        "PAYMENT.CAPTURE.REFUNDED", payload, event_id="WH-EVT-R"
+    )
+    assert updated is not None and updated.checkout_id == paid.checkout_id
+
+
+@pytest.mark.asyncio
+async def test_malformed_refund_amount_does_not_raise_or_change_the_budget():
+    coordinator, paid = await _paid_checkout()
+    policy = coordinator.get_policy(paid.policy_id)
+    before = policy.spent_total
+    for bad in ["abc", "-5", "nan", "inf"]:
+        await coordinator.process_webhook_event(
+            "PAYMENT.CAPTURE.REFUNDED",
+            {"id": paid.paypal_capture_id, "amount": {"value": bad}},
+            checkout_id=paid.checkout_id,
+            event_id=f"WH-BAD-{bad}",
+        )
+    assert policy.spent_total == before
+    assert coordinator.get_session(paid.checkout_id).state.value == "PAID"

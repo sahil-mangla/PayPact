@@ -397,6 +397,7 @@ async def handle_paypal_webhook(request: Request):
         event_type=event_type,
         resource=resource,
         summary=summary,
+        event_id=payload.get("id"),
     )
     return {
         "status": "processed",
