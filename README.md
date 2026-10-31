@@ -11,7 +11,14 @@
 
 **Who it is for:** developers and companies putting an AI agent in front of a checkout, who need a way to prove that what was paid is what was approved.
 
-**Built during the submission period:** the first commit is dated 2026-10-19 and all of the work in this repository was done after the submission period opened on 2026-10-01.
+**Built during the submission period** (opened 2026-10-01); the git history shows when:
+- **Oct 19 to 21:** core build, including the policy engine, state machine, PayPal Orders v2 client, agent, audit ledger, receipts, Integrity Lab and the dashboard.
+- **Oct 28:** webhook verification, receipt signing with a server-held secret, request matching, deployment config and the Apache 2.0 license.
+- **Oct 31:** a security and correctness pass on the payment path (capture guards, settlement checks, webhook handling, budget reservation, input validation), plus tests and documentation.
+
+**Built with AI assistance:** the code was written with AI coding assistants, including Claude Code. The shipped app also uses Gemini and Ollama at run time (Section 8).
+
+**How this relates to existing agent-payment work:** protocols such as Google's AP2 define signed mandates that authorize an agent to buy. PayPact does not implement AP2 or any protocol. It demonstrates one idea end to end on PayPal Orders v2: bind what the user approved to a fingerprint, and re-check it, along with policy and amount, at the moment of payment.
 
 ---
 
@@ -302,7 +309,9 @@ The LLM only proposes. It never sees PayPal credentials and has no network path 
 
 - **State is in memory.** Policies, checkouts and the audit ledger reset on a restart or a free-tier sleep. The ledger is hash-chained, but nothing anchors its head outside the process.
 - **Drift is simulated.** There is no real merchant feed. The attack chips inject price drift and SKU substitution at execute time to show the gate catching it.
-- **No user accounts.** Anyone who can reach a deployment can use it, and the audit tab lists the whole instance's events. Rate limits and a daily Gemini cap bound the cost; real use would need authentication and per-user scoping.
+- **No user accounts, so approval is a convention.** Anyone who can reach a deployment can use it, including calling the approve endpoint with any user id, and the audit tab lists the whole instance's events. Rate limits and a daily Gemini cap bound the cost. Real use would need authentication, an approval step the agent cannot call, and per-user scoping.
+- **The AI is a small part of the system.** Gemini (or Ollama, or a regex fallback) parses the sentence into policy numbers and writes the explanation. Remove it and only the wording changes. This is deliberate: the model has no say over what is bought or paid.
+- **A capture whose amount differs from the approval is flagged, not refunded.** The checkout is marked failed with a ledger entry and the capture id, and needs manual review in PayPal.
 - **Receipts use HMAC.** They are tamper-evident to the server that holds the key, not independently verifiable. Receipts do not carry a key ID, so rotating `APIL_SIGNING_SECRET` invalidates old ones.
 - **Small fixed catalogue.** Nine fixture products (including one adversarial listing) stand in for merchants.
 - **Money uses floats rounded to cents,** and INR is converted to USD at a fixed demo rate for the sandbox.
