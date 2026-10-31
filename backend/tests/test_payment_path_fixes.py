@@ -96,10 +96,13 @@ async def test_paypal_order_is_built_from_stored_proposal_not_request_data(monke
 
         monkeypatch.setattr(coordinator.paypal_client, "create_order", spy_create)
 
-        # Same fingerprinted content, but a different object and a different (unsigned) agent_id.
+        # Same fingerprinted content, but a different object and a different (unsigned) proposal_id.
         forged = session.proposal.model_copy(deep=True)
-        forged.agent_id = "agent_forged"
-        await coordinator.execute_payment(checkout_id, current_proposal_state=forged)
+        forged.proposal_id = "prop_forged"
+        result = await coordinator.execute_payment(
+            checkout_id, current_proposal_state=forged
+        )
+        assert result.state.value == "PAID", result.failure_reason
 
         assert seen["proposal"] is session.proposal
-        assert seen["proposal"].agent_id != "agent_forged"
+        assert seen["proposal"].proposal_id != "prop_forged"
