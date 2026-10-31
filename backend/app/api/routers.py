@@ -70,6 +70,7 @@ class CapturePaymentRequest(BaseModel):
 
     paypal_order_id: str = Field(
         ...,
+        pattern=r"^[A-Za-z0-9-]{1,64}$",
         description="The PayPal Order ID to capture (returned by createOrder callback)",
     )
 

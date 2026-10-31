@@ -1,4 +1,5 @@
 import asyncio
+import re
 import uuid
 from typing import Any, Dict, Optional
 from pydantic import BaseModel, Field
@@ -16,6 +17,10 @@ from app.models.schemas import (
 )
 from app.payments.paypal_client import PayPalClient, PayPalOrderResponse
 from app.policy.engine import DeterministicPolicyEngine
+
+
+# PayPal order ids are short alphanumeric tokens; anything else never reaches a PayPal URL.
+ORDER_ID_RE = re.compile(r"[A-Za-z0-9-]{1,64}")
 
 
 class CheckoutSession(BaseModel):
@@ -427,16 +432,55 @@ class TransactionCoordinator:
         if not session:
             raise ValueError(f"Checkout '{checkout_id}' not found.")
 
-        # Validate order ID matches what we created
-        if session.paypal_order_id and session.paypal_order_id != paypal_order_id:
-            raise ValueError(
-                f"Order ID mismatch: expected '{session.paypal_order_id}', got '{paypal_order_id}'. "
-                "Potential tampering detected."
-            )
+        if not ORDER_ID_RE.fullmatch(paypal_order_id or ""):
+            raise ValueError("Malformed PayPal order ID.")
 
         lock = self._get_execution_lock(checkout_id)
         async with lock:
-            if session.state == TransactionState.PAID:
+            # Everything below runs under the lock, so a concurrent execute or capture
+            # cannot change the state between the checks and the PayPal call.
+            if (
+                session.state == TransactionState.PAID
+                and session.paypal_order_id == paypal_order_id
+            ):
+                return session
+
+            if session.state != TransactionState.CHECKOUT_CREATED:
+                raise ValueError(
+                    f"Cannot capture checkout in state '{session.state}'. Must be CHECKOUT_CREATED."
+                )
+
+            # Only the order this checkout created may be captured through it.
+            if not session.paypal_order_id or session.paypal_order_id != paypal_order_id:
+                raise ValueError(
+                    f"Order ID mismatch: expected '{session.paypal_order_id}', got '{paypal_order_id}'. "
+                    "Potential tampering detected."
+                )
+
+            # The buyer approved in PayPal's popup some time after the gate ran. Policy
+            # revocation or expiry in that window must still stop the money moving.
+            policy = self._policies.get(session.policy_id)
+            if not policy:
+                session.state = TransactionState.FAILED
+                session.failure_reason = "Policy not found during capture."
+                return session
+            reval = DeterministicPolicyEngine.revalidate_pre_execution(
+                proposal=session.proposal,
+                policy=policy,
+                approved_fingerprint=session.approved_fingerprint,
+                approval_granted=session.approval_record is not None,
+            )
+            if reval.decision != PolicyDecisionType.ALLOW:
+                session.state = TransactionState.POLICY_REJECTED
+                session.failure_reason = reval.primary_reason
+                self.audit_ledger.record_event(
+                    event_type="PRE_EXECUTION_BLOCKED",
+                    checkout_id=checkout_id,
+                    policy_version=policy.version,
+                    proposal_fingerprint=reval.proposal_fingerprint,
+                    decision=reval.decision.value,
+                    reason=f"Blocked at capture: {reval.primary_reason}",
+                )
                 return session
 
             try:

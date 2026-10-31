@@ -106,3 +106,90 @@ async def test_paypal_order_is_built_from_stored_proposal_not_request_data(monke
 
         assert seen["proposal"] is session.proposal
         assert seen["proposal"].proposal_id != "prop_forged"
+
+
+async def _checkout_with_order(prompt: str):
+    """Two-phase (live-sandbox style) flow: gate + create order, no capture yet."""
+    from app.api.routers import coordinator
+
+    async with _client() as client:
+        checkout_id = await _new_checkout(client, prompt)
+        if prompt == APPROVAL_PROMPT:
+            await client.post(f"/api/checkouts/{checkout_id}/approve", json={})
+    session = await coordinator.create_paypal_order_only(checkout_id)
+    assert session.state.value == "CHECKOUT_CREATED"
+    return coordinator, session
+
+
+@pytest.mark.asyncio
+async def test_capture_is_refused_for_a_checkout_that_never_created_an_order():
+    async with _client() as client:
+        checkout_id = await _new_checkout(client, AUTO_PROMPT)
+        # Another checkout's real order id must not be capturable through this one.
+        _, other = await _checkout_with_order(AUTO_PROMPT)
+        resp = await client.post(
+            f"/api/checkouts/{checkout_id}/capture",
+            json={"paypal_order_id": other.paypal_order_id},
+        )
+        assert resp.status_code == 400
+        state = (await client.get(f"/api/checkouts/{checkout_id}")).json()["state"]
+        assert state == "AUTHORIZED"
+
+
+@pytest.mark.asyncio
+async def test_capture_is_refused_for_a_rejected_checkout():
+    from app.api.routers import coordinator
+
+    async with _client() as client:
+        checkout_id = await _new_checkout(client, AUTO_PROMPT)
+        await client.post(
+            f"/api/checkouts/{checkout_id}/execute",
+            json={"simulate_drift_type": "price_drift"},
+        )
+        _, other = await _checkout_with_order(AUTO_PROMPT)
+        resp = await client.post(
+            f"/api/checkouts/{checkout_id}/capture",
+            json={"paypal_order_id": other.paypal_order_id},
+        )
+        assert resp.status_code == 400
+        assert coordinator.get_session(checkout_id).state.value == "POLICY_REJECTED"
+
+
+@pytest.mark.asyncio
+async def test_capture_reruns_the_gate_so_a_revoked_policy_cannot_be_paid():
+    coordinator, session = await _checkout_with_order(AUTO_PROMPT)
+    coordinator.revoke_policy(session.policy_id)
+
+    result = await coordinator.capture_approved_order(
+        session.checkout_id, session.paypal_order_id
+    )
+    assert result.state.value == "POLICY_REJECTED"
+    assert result.paypal_capture_id is None
+    assert coordinator.get_policy(session.policy_id).spent_total == 0
+
+
+@pytest.mark.asyncio
+async def test_capture_rejects_malformed_order_ids():
+    async with _client() as client:
+        _, session = await _checkout_with_order(AUTO_PROMPT)
+        for bad in ["../v1/payments", "a/b", "x" * 80, "ord id"]:
+            resp = await client.post(
+                f"/api/checkouts/{session.checkout_id}/capture",
+                json={"paypal_order_id": bad},
+            )
+            assert resp.status_code == 422, bad
+
+
+@pytest.mark.asyncio
+async def test_capture_after_payment_is_idempotent():
+    coordinator, session = await _checkout_with_order(AUTO_PROMPT)
+    first = await coordinator.capture_approved_order(
+        session.checkout_id, session.paypal_order_id
+    )
+    assert first.state.value == "PAID"
+    spent = coordinator.get_policy(session.policy_id).spent_total
+    second = await coordinator.capture_approved_order(
+        session.checkout_id, session.paypal_order_id
+    )
+    assert second.state.value == "PAID"
+    assert coordinator.get_policy(session.policy_id).spent_total == spent
