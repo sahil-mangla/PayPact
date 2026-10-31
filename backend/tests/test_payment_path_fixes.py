@@ -331,3 +331,71 @@ async def test_malformed_refund_amount_does_not_raise_or_change_the_budget():
         )
     assert policy.spent_total == before
     assert coordinator.get_session(paid.checkout_id).state.value == "PAID"
+
+
+@pytest.mark.asyncio
+async def test_simulated_webhooks_are_closed_when_running_against_live_paypal(monkeypatch):
+    from app.api.routers import coordinator
+
+    async with _client() as client:
+        checkout_id = await _new_checkout(client, AUTO_PROMPT)
+        await client.post(f"/api/checkouts/{checkout_id}/execute", json={})
+
+        monkeypatch.setattr(coordinator.paypal_client, "mock_mode", False)
+        monkeypatch.delenv("ENABLE_WEBHOOK_SIMULATION", raising=False)
+        resp = await client.post(
+            "/api/webhooks/simulate", json={"checkout_id": checkout_id}
+        )
+        assert resp.status_code == 403
+        state = (await client.get(f"/api/checkouts/{checkout_id}")).json()["state"]
+        assert state == "PAID"
+
+        monkeypatch.setenv("ENABLE_WEBHOOK_SIMULATION", "true")
+        resp = await client.post(
+            "/api/webhooks/simulate", json={"checkout_id": checkout_id}
+        )
+        assert resp.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_simulated_webhook_rejects_non_positive_amounts():
+    async with _client() as client:
+        checkout_id = await _new_checkout(client, AUTO_PROMPT)
+        await client.post(f"/api/checkouts/{checkout_id}/execute", json={})
+        for amount in (-500, 0):
+            resp = await client.post(
+                "/api/webhooks/simulate",
+                json={"checkout_id": checkout_id, "amount": amount},
+            )
+            assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_registering_a_policy_ignores_client_supplied_spend_and_revocation():
+    async with _client() as client:
+        intent = (
+            await client.post(
+                "/api/authorizations/parse-intent", json={"prompt": AUTO_PROMPT}
+            )
+        ).json()
+        intent.update({"spent_total": 4999.0, "is_revoked": True})
+        registered = (await client.post("/api/authorizations", json=intent)).json()
+        assert registered["spent_total"] == 0
+        assert registered["is_revoked"] is False
+
+
+@pytest.mark.asyncio
+async def test_an_existing_policy_cannot_be_overwritten_through_the_api():
+    async with _client() as client:
+        intent = (
+            await client.post(
+                "/api/authorizations/parse-intent", json={"prompt": AUTO_PROMPT}
+            )
+        ).json()
+        assert (await client.post("/api/authorizations", json=intent)).status_code == 200
+        await client.post(f"/api/authorizations/{intent['policy_id']}/revoke")
+
+        again = await client.post("/api/authorizations", json=intent)
+        assert again.status_code == 409
+        policy = (await client.get(f"/api/authorizations/{intent['policy_id']}")).json()
+        assert policy["is_revoked"] is True

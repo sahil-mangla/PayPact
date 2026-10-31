@@ -129,7 +129,19 @@ async def parse_intent_to_policy(req: ParseIntentRequest):
 
 @router.post("/authorizations", response_model=AuthorizationPolicy)
 async def register_policy(policy: AuthorizationPolicy):
-    """Register user-confirmed authorization policy."""
+    """Register user-confirmed authorization policy.
+
+    Spend and revocation state belong to the server, so anything the client sends for them is
+    reset, and an existing policy id can never be replaced (that would undo a revocation).
+    """
+    if coordinator.get_policy(policy.policy_id):
+        raise HTTPException(
+            status_code=409, detail=f"Policy '{policy.policy_id}' already exists."
+        )
+    policy.spent_total = 0.0
+    policy.is_revoked = False
+    for quota in policy.agent_quotas.values():
+        quota.spent_budget = 0.0
     return coordinator.register_policy(policy)
 
 
