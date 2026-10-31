@@ -53,7 +53,29 @@ const DEFAULT_SCENARIOS = [
   { scenario_id: 'SC-G', name: 'Network Timeout Recovery', category: 'Resilience', failure_type: 'Connection Timeout' },
 ];
 
-function PayPalCheckoutButton({
+// The PayPal SDK is only loaded when these buttons render (live sandbox mode). In demo mode
+// nothing here mounts, so the page makes no calls to paypal.com.
+function PayPalCheckoutButton(props: {
+  checkoutId: string;
+  simulateDrift?: string;
+  onSuccess: (session: any) => void;
+  onError: (msg: string) => void;
+}) {
+  return (
+    <PayPalScriptProvider
+      options={{
+        clientId: PAYPAL_CLIENT_ID || 'test',
+        currency: 'USD',
+        intent: 'capture',
+        components: 'buttons',
+      }}
+    >
+      <PayPalCheckoutInner {...props} />
+    </PayPalScriptProvider>
+  );
+}
+
+function PayPalCheckoutInner({
   checkoutId,
   simulateDrift = 'none',
   onSuccess,
@@ -676,14 +698,7 @@ export default function Home() {
   const originalTotal = proposalRes?.proposal?.total_amount || 0;
 
   return (
-    <PayPalScriptProvider
-      options={{
-        clientId: PAYPAL_CLIENT_ID || 'test',
-        currency: 'USD',
-        intent: 'capture',
-        components: 'buttons',
-      }}
-    >
+    <>
       <main style={{ minHeight: '100vh', background: '#f8fafc', color: '#0f172a', padding: '16px 20px 80px' }}>
         
         {/* ── Floating Pill Navigation (Aceternity SaaS Style) ── */}
@@ -706,7 +721,11 @@ export default function Home() {
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
               <span style={{ fontSize: '1.05rem', fontWeight: 800, color: '#0f172a', letterSpacing: '-0.02em' }}>PayPact</span>
-              <span className="badge badge-neutral" style={{ fontSize: '0.75rem', padding: '2px 8px' }}>PayPal Sandbox</span>
+              {healthStatus && (
+                <span className="badge badge-neutral" style={{ fontSize: '0.75rem', padding: '2px 8px' }}>
+                  {isLiveSandbox ? 'PayPal Sandbox' : 'Demo mode · simulated PayPal'}
+                </span>
+              )}
             </div>
           </div>
 
@@ -1706,6 +1725,12 @@ export default function Home() {
                           <div>Status: <strong style={{ color: checkoutSession.state === 'PAID' ? '#047857' : '#b45309' }}>{checkoutSession.state === 'PAID' ? 'COMPLETED' : checkoutSession.state}</strong></div>
                           <div>Total Charged: <strong style={{ color: '#0f172a' }}>₹{proposalRes.proposal?.total_amount?.toLocaleString()}</strong></div>
                         </div>
+
+                        {isMockMode && (
+                          <p style={{ fontSize: '0.72rem', color: '#64748b', margin: '6px 0 0' }}>
+                            Demo mode: the PayPal order above was simulated, so no real PayPal call was made. Add sandbox credentials (see the README) to use the real PayPal checkout.
+                          </p>
+                        )}
 
                         {/* Receipt Buttons */}
                         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px', marginTop: '8px' }}>
@@ -2731,6 +2756,6 @@ export default function Home() {
         </AnimatePresence>
 
       </main>
-    </PayPalScriptProvider>
+    </>
   );
 }
