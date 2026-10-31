@@ -353,6 +353,14 @@ class TransactionCoordinator:
             if session.state == TransactionState.PAID:
                 return session
 
+            # The buyer closed the PayPal popup and came back: hand back the same order
+            # instead of failing, or creating a second one for the same checkout.
+            if (
+                session.state == TransactionState.CHECKOUT_CREATED
+                and session.paypal_order_id
+            ):
+                return session
+
             if session.state != TransactionState.AUTHORIZED:
                 raise ValueError(
                     f"Cannot execute checkout in state '{session.state}'. Must be AUTHORIZED."

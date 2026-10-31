@@ -399,3 +399,23 @@ async def test_an_existing_policy_cannot_be_overwritten_through_the_api():
         assert again.status_code == 409
         policy = (await client.get(f"/api/authorizations/{intent['policy_id']}")).json()
         assert policy["is_revoked"] is True
+
+
+@pytest.mark.asyncio
+async def test_execute_after_the_popup_was_closed_returns_the_same_order(monkeypatch):
+    coordinator, session = await _checkout_with_order(AUTO_PROMPT)
+    first_order = session.paypal_order_id
+
+    calls = []
+    real_create = coordinator.paypal_client.create_order
+
+    async def counting_create(proposal, request_id=None):
+        calls.append(request_id)
+        return await real_create(proposal=proposal, request_id=request_id)
+
+    monkeypatch.setattr(coordinator.paypal_client, "create_order", counting_create)
+
+    again = await coordinator.create_paypal_order_only(session.checkout_id)
+    assert again.state.value == "CHECKOUT_CREATED"
+    assert again.paypal_order_id == first_order
+    assert calls == []
