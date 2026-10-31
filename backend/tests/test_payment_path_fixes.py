@@ -77,3 +77,29 @@ def test_fingerprint_alone_does_not_count_as_user_approval():
         proposal, policy, approved_fingerprint=fp
     )
     assert result.decision == PolicyDecisionType.REQUIRE_APPROVAL
+
+
+@pytest.mark.asyncio
+async def test_paypal_order_is_built_from_stored_proposal_not_request_data(monkeypatch):
+    from app.api.routers import coordinator
+
+    async with _client() as client:
+        checkout_id = await _new_checkout(client, AUTO_PROMPT)
+        session = coordinator.get_session(checkout_id)
+
+        seen = {}
+        real_create = coordinator.paypal_client.create_order
+
+        async def spy_create(proposal, request_id=None):
+            seen["proposal"] = proposal
+            return await real_create(proposal=proposal, request_id=request_id)
+
+        monkeypatch.setattr(coordinator.paypal_client, "create_order", spy_create)
+
+        # Same fingerprinted content, but a different object and a different (unsigned) agent_id.
+        forged = session.proposal.model_copy(deep=True)
+        forged.agent_id = "agent_forged"
+        await coordinator.execute_payment(checkout_id, current_proposal_state=forged)
+
+        assert seen["proposal"] is session.proposal
+        assert seen["proposal"].agent_id != "agent_forged"

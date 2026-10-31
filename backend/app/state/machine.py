@@ -254,6 +254,10 @@ class TransactionCoordinator:
                 )
                 return session
 
+            # The gate only judges the live copy. Charge exactly what was proposed and
+            # approved, never data that came in with the execute request.
+            live_proposal = session.proposal
+
             # 3. Create PayPal Order
             req_id = idempotency_key or session.idempotency_key
             try:
@@ -373,6 +377,10 @@ class TransactionCoordinator:
                     reason=reval.primary_reason,
                 )
                 return session
+
+            # The gate only judges the live copy. Charge exactly what was proposed and
+            # approved, never data that came in with the execute request.
+            live_proposal = session.proposal
 
             # Check timeout simulation for live sandbox
             if simulate_timeout:
