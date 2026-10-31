@@ -13,6 +13,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.routers import router
+from app.mcp_server import mcp_lifespan, mount_mcp
 
 app = FastAPI(
     title="PayPact — Agent Payment Integrity Layer (APIL) API",
@@ -21,6 +22,7 @@ app = FastAPI(
         "and lifecycle state verification for AI purchasing agents with PayPal."
     ),
     version="1.0.0",
+    lifespan=mcp_lifespan,
 )
 
 # Enable CORS for Next.js web application
@@ -48,9 +50,11 @@ app.add_middleware(
     allow_credentials=allow_credentials,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["Mcp-Session-Id"],  # lets browser-based MCP clients read the session id
 )
 
 app.include_router(router)
+mount_mcp(app)  # MCP over streamable HTTP at /mcp
 
 
 @app.get("/")

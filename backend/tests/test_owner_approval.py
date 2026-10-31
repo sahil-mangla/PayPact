@@ -62,7 +62,8 @@ async def test_registration_returns_the_owner_token_once_and_never_again():
             body = (await client.get(url)).text
             assert token not in body, url
             assert stored_hash not in body, url
-            assert "owner_token" not in body, url
+            # (the audit trail legitimately says `"via": "owner_token"`; only a field would be a leak)
+            assert '"owner_token":' not in body, url
 
 
 @pytest.mark.asyncio

@@ -258,21 +258,28 @@ async def revoke_policy(
 # ----------------------------------------------------
 # 3. Agent Proposals & Checkout Lifecycle
 # ----------------------------------------------------
-@router.post("/proposals", dependencies=[Depends(llm_rate_limit)])
-async def create_proposal(req: CreateProposalRequest):
-    policy = coordinator.get_policy(req.policy_id)
+async def run_proposal(
+    prompt: str,
+    policy_id: str,
+    preferred_sku: Optional[str] = None,
+    agent_id: Optional[str] = "agent_hardware",
+) -> Dict[str, Any]:
+    """Have the shopper agent propose a purchase and open a checkout session for it.
+
+    Shared by POST /api/proposals and the MCP propose_purchase tool, so both go through the
+    same agent and the same policy gate. Raises HTTPException (404 unknown policy, 400 agent error).
+    """
+    policy = coordinator.get_policy(policy_id)
     if not policy:
-        raise HTTPException(
-            status_code=404, detail=f"Policy '{req.policy_id}' not found."
-        )
+        raise HTTPException(status_code=404, detail=f"Policy '{policy_id}' not found.")
 
     try:
         agent_res = await run_in_threadpool(
             ShopperAgent.generate_proposal,
-            user_prompt=req.prompt,
+            user_prompt=prompt,
             policy=policy,
-            preferred_sku=req.preferred_sku,
-            agent_id=req.agent_id,
+            preferred_sku=preferred_sku,
+            agent_id=agent_id,
         )
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -290,6 +297,13 @@ async def create_proposal(req: CreateProposalRequest):
         "agent_trace": agent_res.get("agent_trace", []),
         "failure_reason": session.failure_reason,
     }
+
+
+@router.post("/proposals", dependencies=[Depends(llm_rate_limit)])
+async def create_proposal(req: CreateProposalRequest):
+    return await run_proposal(
+        req.prompt, req.policy_id, preferred_sku=req.preferred_sku, agent_id=req.agent_id
+    )
 
 
 @router.post(
@@ -356,8 +370,7 @@ async def redeem_approval_link(token: str):
         raise _checkout_error(e)
 
 
-@router.post("/checkouts/{checkout_id}/execute")
-async def execute_checkout(checkout_id: str, req: ExecutePaymentRequest):
+async def run_execute(checkout_id: str, req: ExecutePaymentRequest) -> Dict[str, Any]:
     """
     Execute step 1: Runs pre-execution invariant gate, creates PayPal order.
 
@@ -442,6 +455,11 @@ async def execute_checkout(checkout_id: str, req: ExecutePaymentRequest):
             }
     except Exception as e:
         raise _checkout_error(e)
+
+
+@router.post("/checkouts/{checkout_id}/execute")
+async def execute_checkout(checkout_id: str, req: ExecutePaymentRequest):
+    return await run_execute(checkout_id, req)
 
 
 @router.post("/checkouts/{checkout_id}/capture")
