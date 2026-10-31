@@ -311,3 +311,46 @@ describe('Honest status when things go wrong', () => {
     expect(await screen.findByText(/isn't in the catalogue|not in the catalogue/i)).toBeInTheDocument();
   });
 });
+
+describe('Receipt dialog', () => {
+  function mockFlow(decision: 'ALLOW' | 'REJECT_OR_BLOCKED') {
+    localStorage.clear();
+    global.fetch = vi.fn().mockImplementation((url: string, options?: any) => {
+      const json = (b: any) => Promise.resolve({ ok: true, json: () => Promise.resolve(b) });
+      if (url.includes('/health')) return json({ status: 'healthy', paypal_mode: 'mock', ollama: {} });
+      if (url.includes('/receipt/verify')) return json({ valid: true, receipt_id: 'r1', checkout_id: 'c1', algorithm: 'HMAC-SHA256', signer: 's' });
+      if (url.includes('/receipt')) return json({ ...SAMPLE_RECEIPT, decision });
+      if (url.includes('/authorizations')) return json(MOCK_POLICY);
+      if (url.includes('/proposals')) return json(MOCK_PROPOSAL_RES);
+      if (url.includes('/execute')) {
+        return json({ session: { checkout_id: 'chk_flow_test_01', state: 'PAID', paypal_order_id: 'MOCK-ORD-1', paypal_capture_id: 'MOCK-CAP-1', proposal: MOCK_PROPOSAL_RES.proposal } });
+      }
+      return json([]);
+    }) as any;
+  }
+
+  async function openReceipt() {
+    render(<Home />);
+    fireEvent.click(screen.getByText('Generate Proposal & Check Rules'));
+    fireEvent.click(await screen.findByText('Execute Authorized Payment'));
+    fireEvent.click(await screen.findByText('Verify Audit Signature'));
+    return screen.findByRole('dialog');
+  }
+
+  it('is a labelled dialog that takes focus and closes on Escape', async () => {
+    mockFlow('ALLOW');
+    const dialog = await openReceipt();
+    expect(dialog).toHaveAttribute('aria-modal', 'true');
+    expect(dialog).toHaveAccessibleName('Payment Audit Receipt');
+    await waitFor(() => expect(document.activeElement).toBe(dialog));
+
+    fireEvent.keyDown(window, { key: 'Escape' });
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+  });
+
+  it('calls a record of a refused purchase a refusal record, not a payment receipt', async () => {
+    mockFlow('REJECT_OR_BLOCKED');
+    const dialog = await openReceipt();
+    expect(dialog).toHaveAccessibleName('Refusal Record');
+  });
+});

@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   PayPalScriptProvider,
@@ -41,6 +41,7 @@ import { WordByWordText } from '../components/WordByWordText';
 import ParticleMorphOrb, { AiThinkingOrb } from '../components/ui/ParticleMorphOrb';
 import { apiFetch, assertPaid, errorMessage, getApiBaseUrl, isConnectionProblem } from '../lib/api';
 import { decisionBadge, decisionSummary } from '../lib/decision';
+import { formatTimestamp, humanizeEvent } from '../lib/format';
 
 const PAYPAL_CLIENT_ID = process.env.NEXT_PUBLIC_PAYPAL_CLIENT_ID || '';
 
@@ -532,6 +533,18 @@ export default function Home() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [checkoutSession?.state]);
 
+  // The receipt modal is a dialog: move focus into it and let Escape close it.
+  const receiptDialogRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (!receiptModalOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setReceiptModalOpen(false);
+    };
+    window.addEventListener('keydown', onKey);
+    receiptDialogRef.current?.focus();
+    return () => window.removeEventListener('keydown', onKey);
+  }, [receiptModalOpen, inspectingReceipt]);
+
   const handleSimulateWebhook = async (checkoutId: string, eventType: string) => {
     try {
       setWebhookStatus(`Sending PayPal webhook: ${eventType}...`);
@@ -704,6 +717,26 @@ export default function Home() {
   return (
     <>
       <main style={{ minHeight: '100vh', background: '#f8fafc', color: '#0f172a', padding: '16px 20px 80px' }}>
+        {/* Announces payment and policy outcomes to screen readers */}
+        <div
+          role="status"
+          aria-live="polite"
+          style={{ position: 'absolute', width: 1, height: 1, overflow: 'hidden', clip: 'rect(0 0 0 0)', whiteSpace: 'nowrap' }}
+        >
+          {checkoutSession?.state === 'PAID'
+            ? 'Payment completed.'
+            : checkoutSession?.state === 'REFUNDED'
+              ? 'Payment refunded.'
+              : checkoutSession?.state === 'POLICY_REJECTED'
+                ? `Purchase blocked. ${checkoutSession.failure_reason || ''}`
+                : proposalRes?.state === 'POLICY_REJECTED'
+                  ? `Purchase blocked. ${proposalRes.failure_reason || ''}`
+                  : proposalRes?.state === 'AWAITING_APPROVAL'
+                    ? 'Proposal ready. It needs your approval.'
+                    : proposalRes?.state === 'AUTHORIZED'
+                      ? 'Proposal ready and within your limits.'
+                      : ''}
+        </div>
         
         {/* ── Floating Pill Navigation (Aceternity SaaS Style) ── */}
         <header className="floating-pill-nav">
@@ -724,7 +757,7 @@ export default function Home() {
               <ShieldCheck size={18} color="#ffffff" />
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-              <span style={{ fontSize: '1.05rem', fontWeight: 800, color: '#0f172a', letterSpacing: '-0.02em' }}>PayPact</span>
+              <h1 style={{ fontSize: '1.05rem', fontWeight: 800, color: '#0f172a', letterSpacing: '-0.02em', margin: 0 }}>PayPact</h1>
               {healthStatus && (
                 <span className="badge badge-neutral" style={{ fontSize: '0.75rem', padding: '2px 8px' }}>
                   {isLiveSandbox ? 'PayPal Sandbox' : 'Demo mode · simulated PayPal'}
@@ -734,7 +767,7 @@ export default function Home() {
           </div>
 
           {/* Animated Pill Tab Switcher (layoutId Sliding Motion) */}
-          <div className="pill-tab-container">
+          <div className="pill-tab-container" role="tablist" aria-label="Sections">
             {[
               { id: 'agent', label: 'Purchase Flow', icon: ShoppingBag },
               { id: 'lab', label: 'Policy Test Lab', icon: Play },
@@ -745,6 +778,8 @@ export default function Home() {
               return (
                 <button
                   key={tab.id}
+                  role="tab"
+                  aria-selected={isActive}
                   onClick={() => {
                     setActiveTab(tab.id as any);
                     if (tab.id === 'lab') handleRunBenchmark();
@@ -2437,10 +2472,10 @@ export default function Home() {
                       <div className="wrap-sm" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '4px' }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                           <span style={{ fontSize: '0.75rem', color: '#94a3b8', fontFamily: 'JetBrains Mono, monospace' }}>#{i + 1}</span>
-                          <strong style={{ fontSize: '0.82rem', color: '#0f172a' }}>{ev.event_type}</strong>
+                          <strong title={ev.event_type} style={{ fontSize: '0.82rem', color: '#0f172a' }}>{humanizeEvent(ev.event_type)}</strong>
                           {ev.checkout_id && <span className="badge badge-neutral" style={{ fontSize: '0.75rem', padding: '1px 5px' }}>{ev.checkout_id}</span>}
                         </div>
-                        <span style={{ fontSize: '0.75rem', color: '#526077', fontFamily: 'JetBrains Mono, monospace' }}>{ev.timestamp}</span>
+                        <span style={{ fontSize: '0.75rem', color: '#526077', fontFamily: 'JetBrains Mono, monospace' }} title={ev.timestamp}>{formatTimestamp(ev.timestamp)}</span>
                       </div>
                       {ev.reason && <p style={{ fontSize: '0.78rem', color: '#475569', margin: '2px 0 6px' }}>{ev.reason}</p>}
                       <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap' }}>
@@ -2491,11 +2526,17 @@ export default function Home() {
                 exit={{ scale: 0.95, opacity: 0, y: 15 }}
                 transition={{ type: 'spring', damping: 25, stiffness: 300 }}
                 className="clean-card"
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="receipt-modal-title"
+                tabIndex={-1}
+                ref={receiptDialogRef}
                 style={{
                   width: '100%',
                   maxWidth: '680px',
                   padding: '28px',
                   boxShadow: '0 20px 40px rgba(0, 0, 0, 0.15)',
+                  outline: 'none',
                 }}
                 onClick={(e) => e.stopPropagation()}
               >
@@ -2505,8 +2546,14 @@ export default function Home() {
                       <Key size={18} color="#0070ba" />
                     </div>
                     <div>
-                      <h3 style={{ fontSize: '1.08rem', fontWeight: 700, color: '#0f172a' }}>Payment Audit Receipt</h3>
-                      <p style={{ fontSize: '0.76rem', color: '#526077' }}>Cryptographically signed proof of authorized purchase</p>
+                      <h3 id="receipt-modal-title" style={{ fontSize: '1.08rem', fontWeight: 700, color: '#0f172a' }}>
+                        {inspectingReceipt.decision === 'ALLOW' ? 'Payment Audit Receipt' : 'Refusal Record'}
+                      </h3>
+                      <p style={{ fontSize: '0.76rem', color: '#526077' }}>
+                        {inspectingReceipt.decision === 'ALLOW'
+                          ? 'Signed record of an approved and paid purchase (HMAC-SHA256)'
+                          : 'Signed record that this purchase was not paid (HMAC-SHA256)'}
+                      </p>
                     </div>
                   </div>
                   <button

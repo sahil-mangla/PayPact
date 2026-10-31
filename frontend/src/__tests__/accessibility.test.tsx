@@ -63,3 +63,24 @@ describe('First-run explanation', () => {
     expect(steps.textContent).toMatch(/signed receipt/);
   });
 });
+
+describe('Page structure for assistive technology', () => {
+  beforeEach(() => {
+    mockMatchMedia(false);
+    global.fetch = vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve({}) }) as any;
+  });
+
+  it('has a page heading and an exposed tab list', () => {
+    render(<Home />);
+    expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('PayPact');
+    const tabs = screen.getAllByRole('tab');
+    expect(tabs).toHaveLength(3);
+    expect(screen.getByRole('tab', { name: /Purchase Flow/i })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByRole('tab', { name: /Audit Trail/i })).toHaveAttribute('aria-selected', 'false');
+  });
+
+  it('announces outcomes through a polite live region', () => {
+    render(<Home />);
+    expect(screen.getByRole('status')).toHaveAttribute('aria-live', 'polite');
+  });
+});
