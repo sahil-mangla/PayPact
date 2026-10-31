@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import os
-from typing import List, Optional
+import time
+from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel, Field
 
 from app.agent.shopper_agent import ShopperAgent
@@ -85,32 +87,53 @@ class LabRunRequest(BaseModel):
 # ----------------------------------------------------
 # 1. Health & Catalogue
 # ----------------------------------------------------
+# Probing Ollama and Gemini costs a network round trip each, and /health doubles as the
+# hosting platform's liveness check, so the model status is cached briefly.
+_MODEL_HEALTH_TTL_SECONDS = 30.0
+_model_health_cache: Dict[str, Any] = {}
+
+
+def reset_model_health_cache() -> None:
+    _model_health_cache.clear()
+
+
+def _public_model_info(info: Dict[str, Any]) -> Dict[str, Any]:
+    """Availability and model name only: no URLs, error bodies or installed-model lists."""
+    return {k: info[k] for k in ("available", "model", "installed", "provider") if k in info}
+
+
+def _model_health() -> Dict[str, Any]:
+    cached = _model_health_cache.get("value")
+    now = time.monotonic()
+    if cached and now - cached[0] < _MODEL_HEALTH_TTL_SECONDS:
+        return cached[1]
+    from app.agent.gemini_client import GeminiClient
+    from app.agent.ollama_client import OllamaClient
+
+    value = {
+        "ollama": _public_model_info(OllamaClient.check_health()),
+        "gemini": _public_model_info(GeminiClient.check_health()),
+    }
+    _model_health_cache["value"] = (now, value)
+    return value
+
+
 @router.get("/health")
 async def health_check():
     is_mock = coordinator.paypal_client.mock_mode
-    from app.agent.ollama_client import OllamaClient
-    from app.agent.gemini_client import GeminiClient
-
-    ollama_info = OllamaClient.check_health()
-    gemini_info = GeminiClient.check_health()
+    models = await run_in_threadpool(_model_health)
     return {
         "status": "healthy",
         "service": "Agent Payment Integrity Layer (APIL)",
         "paypal_mode": "mock" if is_mock else "live_sandbox",
-        "paypal_client_id": coordinator.paypal_client.client_id[:20] + "..."
-        if not is_mock
-        else None,
-        "ollama": ollama_info,
-        "gemini": gemini_info,
+        **models,
     }
 
 
 @router.get("/agent/model-status")
 async def get_agent_model_status():
     """Return local Ollama AI model availability and active configuration."""
-    from app.agent.ollama_client import OllamaClient
-
-    return OllamaClient.check_health()
+    return (await run_in_threadpool(_model_health))["ollama"]
 
 
 @router.get("/catalogue", response_model=List[Product])
@@ -124,7 +147,10 @@ async def get_catalogue():
 @router.post("/authorizations/parse-intent", response_model=AuthorizationPolicy)
 async def parse_intent_to_policy(req: ParseIntentRequest):
     """Extract structured policy constraints from natural language."""
-    return ShopperAgent.parse_intent_to_policy(req.prompt, user_id=req.user_id)
+    # The agent calls an LLM over blocking HTTP; keep that off the event loop.
+    return await run_in_threadpool(
+        ShopperAgent.parse_intent_to_policy, req.prompt, user_id=req.user_id
+    )
 
 
 @router.post("/authorizations", response_model=AuthorizationPolicy)
@@ -173,7 +199,8 @@ async def create_proposal(req: CreateProposalRequest):
         )
 
     try:
-        agent_res = ShopperAgent.generate_proposal(
+        agent_res = await run_in_threadpool(
+            ShopperAgent.generate_proposal,
             user_prompt=req.prompt,
             policy=policy,
             preferred_sku=req.preferred_sku,

@@ -23,3 +23,12 @@ def no_live_llm(monkeypatch):
     """
     monkeypatch.setenv("GEMINI_API_KEY", "")
     monkeypatch.setattr("app.agent.ollama_client.OLLAMA_BASE_URL", "http://127.0.0.1:9")
+
+
+@pytest.fixture(autouse=True)
+def fresh_model_health_cache():
+    """Health results are cached for a short window; every test starts without one."""
+    from app.api import routers
+
+    routers.reset_model_health_cache()
+    yield

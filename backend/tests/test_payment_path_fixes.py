@@ -652,3 +652,64 @@ def test_k_suffix_amounts_count_as_typed_by_the_user(monkeypatch):
     _llm_returns(monkeypatch, {"category": "keyboard", "max_budget": 5000, "currency": "INR"})
     policy = ShopperAgent.parse_intent_to_policy("keyboard under 5k")
     assert policy.maximum_total == 5000.0
+
+
+@pytest.mark.asyncio
+async def test_health_does_not_expose_credentials_or_internal_urls():
+    async with _client() as client:
+        body = (await client.get("/api/health")).json()
+        status = (await client.get("/api/agent/model-status")).json()
+    text = str(body) + str(status)
+    assert "paypal_client_id" not in body
+    assert "base_url" not in text
+    assert "models_list" not in text
+    assert "paypal_mode" in body
+
+
+@pytest.mark.asyncio
+async def test_health_probes_models_once_per_cache_window(monkeypatch):
+    from app.agent.gemini_client import GeminiClient
+    from app.agent.ollama_client import OllamaClient
+
+    calls = {"ollama": 0, "gemini": 0}
+
+    def ollama(cls):
+        calls["ollama"] += 1
+        return {"available": False, "model": "m"}
+
+    def gemini(cls):
+        calls["gemini"] += 1
+        return {"available": False, "model": "g"}
+
+    monkeypatch.setattr(OllamaClient, "check_health", classmethod(ollama))
+    monkeypatch.setattr(GeminiClient, "check_health", classmethod(gemini))
+    async with _client() as client:
+        for _ in range(5):
+            assert (await client.get("/api/health")).status_code == 200
+    assert calls == {"ollama": 1, "gemini": 1}
+
+
+@pytest.mark.asyncio
+async def test_slow_llm_calls_do_not_block_other_requests(monkeypatch):
+    import asyncio
+    import time
+
+    from app.agent.shopper_agent import ShopperAgent
+
+    real = ShopperAgent.parse_intent_to_policy
+
+    def slow(cls, user_prompt, user_id="usr_demo"):
+        time.sleep(0.4)
+        return real(user_prompt, user_id=user_id)
+
+    monkeypatch.setattr(ShopperAgent, "parse_intent_to_policy", classmethod(slow))
+    async with _client() as client:
+        started = time.monotonic()
+        slow_call = asyncio.create_task(
+            client.post("/api/authorizations/parse-intent", json={"prompt": AUTO_PROMPT})
+        )
+        await asyncio.sleep(0.05)
+        await client.get("/api/catalogue")
+        fast_elapsed = time.monotonic() - started
+        assert (await slow_call).status_code == 200
+    assert fast_elapsed < 0.3
