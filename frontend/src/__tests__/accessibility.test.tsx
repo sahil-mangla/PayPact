@@ -1,6 +1,6 @@
 import React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import Home from '../app/page';
 import { WordByWordText } from '../components/WordByWordText';
 
@@ -82,5 +82,28 @@ describe('Page structure for assistive technology', () => {
   it('announces outcomes through a polite live region', () => {
     render(<Home />);
     expect(screen.getByRole('status')).toHaveAttribute('aria-live', 'polite');
+  });
+});
+
+
+describe('Result visibility on a phone', () => {
+  it('scrolls a new result into view on a narrow screen but not on a wide one', async () => {
+    mockMatchMedia(false);
+    const scroll = vi.fn();
+    (Element.prototype as any).scrollIntoView = scroll;
+    const proposal = { checkout_id: 'c1', state: 'AUTHORIZED', recommendation_explanation: 'ok', proposal: { items: [{ sku: 'S', name: 'N', quantity: 1, unit_price: 1 }], total_amount: 1, item_subtotal: 1, shipping_fee: 0, tax_fee: 0, currency: 'INR', merchant: 'M', proposal_fingerprint: 'f' } };
+    global.fetch = vi.fn().mockImplementation((url: string) =>
+      Promise.resolve({ ok: true, json: () => Promise.resolve(url.includes('/proposals') ? proposal : url.includes('/health') ? { paypal_mode: 'mock' } : { policy_id: 'p', maximum_total: 5, automatic_purchase_limit: 4, agent_quotas: {} }) }),
+    ) as any;
+
+    for (const [width, expected] of [[390, true], [1440, false]] as const) {
+      scroll.mockClear();
+      Object.defineProperty(window, 'innerWidth', { configurable: true, value: width });
+      const { unmount } = render(<Home />);
+      fireEvent.click(screen.getByText('Generate Proposal & Check Rules'));
+      await waitFor(() => expect(screen.getByTestId('decision-note')).toBeInTheDocument());
+      expect(scroll.mock.calls.length > 0).toBe(expected);
+      unmount();
+    }
   });
 });

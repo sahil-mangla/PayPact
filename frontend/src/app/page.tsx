@@ -534,6 +534,14 @@ export default function Home() {
   }, [checkoutSession?.state]);
 
   // The receipt modal is a dialog: move focus into it and let Escape close it.
+  // On a phone the result column sits below the form, so bring a new result into view.
+  const resultColumnRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (!proposalRes && !checkoutSession) return;
+    if (typeof window === 'undefined' || window.innerWidth >= 900) return;
+    resultColumnRef.current?.scrollIntoView?.({ behavior: 'smooth', block: 'start' });
+  }, [proposalRes?.checkout_id, checkoutSession?.state]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const receiptDialogRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
     if (!receiptModalOpen) return;
@@ -1533,7 +1541,7 @@ export default function Home() {
               </div>
 
               {/* ─── Right Column: Proposal & Checkout ─── */}
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+              <div ref={resultColumnRef} style={{ display: 'flex', flexDirection: 'column', gap: '10px', scrollMarginTop: '12px' }}>
                 {!proposalRes ? (
                   <div className="clean-card" style={{ padding: '40px 18px', textAlign: 'center', color: '#526077', minHeight: '380px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
                     <CreditCard size={36} strokeWidth={1.3} style={{ margin: '0 auto 10px', color: '#cbd5e1' }} />
