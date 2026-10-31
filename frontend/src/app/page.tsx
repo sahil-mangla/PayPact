@@ -361,7 +361,11 @@ export default function Home() {
   };
 
   // Intent parsing → rule registration → item proposal
-  const handleParsePolicy = async (promptOverride?: string, agentOverride?: string) => {
+  const handleParsePolicy = async (
+    promptOverride?: string,
+    agentOverride?: string,
+    keepDrift = false,
+  ): Promise<any | null> => {
     const activePrompt = promptOverride !== undefined ? promptOverride : prompt;
     const activeAgent = agentOverride || selectedAgent;
     if (promptOverride !== undefined) setPrompt(promptOverride);
@@ -373,7 +377,7 @@ export default function Home() {
     setProposalRes(null);
     setCheckoutSession(null);
     setPolicy(null);
-    if (!attackNotice) {
+    if (!keepDrift && !attackNotice) {
       setSimulateDrift('none');
     }
     setPipelineBlocked(false);
@@ -404,16 +408,17 @@ export default function Home() {
       setPipelineStep(3);
 
       // 3. Generate proposal
-      await handleGenerateProposal(savedPolicy.policy_id, activeAgent, activePrompt);
+      return await handleGenerateProposal(savedPolicy.policy_id, activeAgent, activePrompt);
     } catch (err: any) {
       setErrorMsg(err.message || 'Error processing request');
       setPipelineStep(1);
+      return null;
     } finally {
       setLoading(false);
     }
   };
 
-  const handleGenerateProposal = async (policyId: string, agentOverride?: string, promptOverride?: string) => {
+  const handleGenerateProposal = async (policyId: string, agentOverride?: string, promptOverride?: string): Promise<any | null> => {
     try {
       const activeAgent = agentOverride || selectedAgent;
       const activePrompt = promptOverride !== undefined ? promptOverride : prompt;
@@ -433,10 +438,12 @@ export default function Home() {
       } else {
         setPipelineStep(3);
       }
+      return data;
     } catch (err: any) {
       setErrorMsg(err.message);
       setRefusalReason(err.message);
       setPipelineBlocked(true);
+      return null;
     }
   };
 
@@ -551,17 +558,20 @@ export default function Home() {
     }
   };
 
-  const handleInjectDriftAndBlock = async () => {
-    if (!proposalRes?.checkout_id) return;
+  const handleInjectDriftAndBlock = async (
+    checkoutId: string | undefined = proposalRes?.checkout_id,
+    drift: string = simulateDrift,
+  ) => {
+    if (!checkoutId) return;
     setLoading(true);
     setErrorMsg(null);
     setPipelineStep(3);
     await new Promise((r) => setTimeout(r, 300));
     try {
-      const res = await apiFetch(`/checkouts/${proposalRes.checkout_id}/execute`, {
+      const res = await apiFetch(`/checkouts/${checkoutId}/execute`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ simulate_drift_type: simulateDrift }),
+        body: JSON.stringify({ simulate_drift_type: drift }),
       });
       const data = await res.json();
       const session = data.session || data;
@@ -1199,11 +1209,28 @@ export default function Home() {
                             whileHover={{ scale: 1.01 }}
                             whileTap={{ scale: 0.99 }}
                             type="button"
-                            onClick={() => {
+                            disabled={loading}
+                            onClick={async () => {
                               setPrompt(atk.prompt);
                               setSimulateDrift(atk.drift);
                               setAttackNotice(atk.notice);
                               setErrorMsg(null);
+                              // One click runs the whole attack: propose, then (for drift
+                              // attacks) fire the tampered execution so the block is visible.
+                              const proposal = await handleParsePolicy(atk.prompt, undefined, true);
+                              if (atk.drift !== 'none' && proposal?.checkout_id) {
+                                if (proposal.state === 'AWAITING_APPROVAL') {
+                                  // The attack is drift *after* approval, so approve first.
+                                  await apiFetch(`/checkouts/${proposal.checkout_id}/approve`, {
+                                    method: 'POST',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({ user_id: 'usr_shopper' }),
+                                  });
+                                }
+                                if (proposal.state === 'AUTHORIZED' || proposal.state === 'AWAITING_APPROVAL') {
+                                  await handleInjectDriftAndBlock(proposal.checkout_id, atk.drift);
+                                }
+                              }
                             }}
                             style={{
                               display: 'inline-flex',
@@ -1544,7 +1571,7 @@ export default function Home() {
                             <motion.button
                               whileHover={{ scale: 1.02 }}
                               whileTap={{ scale: 0.98 }}
-                              onClick={handleInjectDriftAndBlock}
+                              onClick={() => handleInjectDriftAndBlock()}
                               disabled={loading}
                               className="btn btn-danger"
                               style={{ width: '100%', padding: '8px', fontSize: '0.8rem' }}

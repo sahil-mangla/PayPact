@@ -156,3 +156,56 @@ describe('End-to-End User Actions & Flow Test', () => {
     });
   });
 });
+
+describe('Attack simulator chips run in one click', () => {
+  const calls: Array<{ url: string; body: any }> = [];
+
+  beforeEach(() => {
+    calls.length = 0;
+    localStorage.clear();
+    global.fetch = vi.fn().mockImplementation((url: string, options?: any) => {
+      const body = options?.body ? JSON.parse(options.body) : undefined;
+      calls.push({ url, body });
+      if (url.includes('/health')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ status: 'healthy', paypal_mode: 'mock', ollama: {} }) });
+      }
+      if (url.includes('/authorizations')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve(MOCK_POLICY) });
+      }
+      if (url.includes('/proposals')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve(MOCK_PROPOSAL_RES) });
+      }
+      if (url.includes('/execute')) {
+        return Promise.resolve({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              session: { checkout_id: 'chk_flow_test_01', state: 'POLICY_REJECTED', failure_reason: 'Proposal details drifted after user approval was granted.', proposal: MOCK_PROPOSAL_RES.proposal },
+            }),
+        });
+      }
+      return Promise.resolve({ ok: true, json: () => Promise.resolve([]) });
+    });
+  });
+
+  it('a prompt-injection chip submits the request without a second click', async () => {
+    render(<Home />);
+    fireEvent.click(screen.getByText('Prompt Injection Bypass'));
+
+    await waitFor(() => {
+      const parse = calls.find((c) => c.url.includes('/authorizations/parse-intent'));
+      expect(parse?.body.prompt).toContain('Rolex');
+      expect(calls.some((c) => c.url.includes('/proposals'))).toBe(true);
+    });
+  });
+
+  it('a drift chip also fires the drifted execution so the block is shown', async () => {
+    render(<Home />);
+    fireEvent.click(screen.getByText('Stealth Shipping Drift (+₹850)'));
+
+    await waitFor(() => {
+      const exec = calls.find((c) => c.url.includes('/execute'));
+      expect(exec?.body.simulate_drift_type).toBe('price_drift');
+    });
+  });
+});
