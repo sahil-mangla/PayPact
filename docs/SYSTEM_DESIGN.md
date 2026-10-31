@@ -240,8 +240,8 @@ The application will feature a unified, modern web interface with two primary vi
 ### View 2: Integrity Lab (The Evaluation Suite)
 1. **Scenario Runner:** Grid of the 7 test scenarios with 1-click execution.
 2. **Side-by-Side System Comparison:** Toggle between Baseline A, Baseline B, and Proposed APIL to visually witness how naive agents fail and how APIL protects the transaction.
-3. **Trace Inspector & Fingerprint Diff:** Visual diff viewer showing exactly what drifted (e.g. green original vs red drifted price) and why the gate fired.
-4. **Exportable Evaluation Metrics:** Live statistics table showing Unauthorized Spend Rate (0% on APIL vs 60%+ on baselines), False Block Rate, and Latency overhead (measured against the offline mock PayPal client, so it reflects the gate itself, not network time).
+3. **Drift Display:** On the Purchase Flow, an injected price drift shows the original total struck through beside the altered total, with the reason the gate refused.
+4. **Evaluation Metrics:** Per system: pass rate, unauthorized-spend count and average gate latency, taken from the last run. Latency is measured against the offline mock PayPal client, so it reflects the gate itself, not network time. (A false-block rate was planned but is not measured.)
 
 ---
 
@@ -299,7 +299,7 @@ The development is split into discrete, test-driven milestones:
 |---|---|---|---|
 | **Phase 1** | **M0: Spec & Git Init** | Architecture, Schemas, Threat Model, Git Setup | Repo cleanly configured, docs approved |
 | **Phase 2** | **M1: Policy & Fingerprint Core** | Pure deterministic engine, canonical hasher, unit tests | 100% test pass on boundary & drift tests |
-| **Phase 3** | **M2: PayPal Sandbox Integration** | Orders v2 client, OAuth2 token caching, idempotency, test capture | Verified sandbox transaction in isolation |
+| **Phase 3** | **M2: PayPal Sandbox Integration** | Orders v2 client, OAuth2 token caching, idempotency, test capture | Order create and capture covered by tests against a fake PayPal; a real sandbox run needs your own credentials |
 | **Phase 4** | **M3: Agent & Catalogue Engine** | Structured output parser, catalogue fixtures, proposal generator | Agent proposes valid JSON, cannot call payment |
 | **Phase 5** | **M4: Pre-Execution Lifecycle & State Engine** | State machine, price/policy drift guards, audit logger | SC-B, SC-C, SC-D, SC-E blocked before payment |
 | **Phase 6** | **M5: Integrity Lab Benchmark Runner** | Scenarios A-G runner, Baselines A/B/Proposed comparison | Automated test suite produces evaluation JSON |

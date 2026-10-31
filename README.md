@@ -110,9 +110,9 @@ Baselines A and B are small hand-written stand-ins in [`backend/app/lab/benchmar
 
 | System Configuration | Scenarios | Passed Scenarios | Pass Rate (%) | Unauthorized Spends | Avg Latency (mock) |
 |:---|:---:|:---:|:---:|:---:|:---:|
-| **Baseline A (No Gate)** | 7 | 1 | **14.3%** | 6 | 0.10 ms |
-| **Baseline B (Static Gate)** | 7 | 4 | **57.1%** | 3 | 0.09 ms |
-| **PayPact (APIL)** | 7 | 7 | **100.0%** | **0** | **0.09 ms** |
+| **Baseline A (No Gate)** | 7 | 1 | **14.3%** | 6 | 0.1 ms |
+| **Baseline B (Static Gate)** | 7 | 4 | **57.1%** | 3 | 0.1 ms |
+| **PayPact (APIL)** | 7 | 7 | **100.0%** | **0** | **0.1 ms** |
 
 *Note on calculations: 1 / 7 = 14.3%, 4 / 7 = 57.1%, 7 / 7 = 100.0%.*
 
@@ -174,6 +174,8 @@ Open **http://localhost:3000**. `GET http://localhost:8000/api/health` should re
 6. Restart both servers. `GET /api/health` now reports `"paypal_mode": "live_sandbox"`.
 7. Run a purchase, press **Pay with PayPal**, and approve it with the sandbox buyer account. The backend re-checks the policy and the amount when it captures.
 
+The automated tests exercise the live code paths (order creation, capture, reconciliation, webhooks) against a fake PayPal served over `httpx.MockTransport`, so they run without credentials; the real sandbox is only exercised by following the steps above.
+
 The sandbox does not support INR, so INR amounts are converted to USD at a fixed demo rate (83 INR per USD, override with `INR_TO_USD_RATE`) before the order is created.
 
 ### Configuration
@@ -193,10 +195,14 @@ The sandbox does not support INR, so INR amounts are converted to USD at a fixed
 | `CORS_ORIGINS` | localhost origins | Comma-separated allowed origins, or `*`. |
 | `NEXT_PUBLIC_API_URL` / `BACKEND_URL` | `http://localhost:8000` | Where the Next.js `/api` proxy sends requests. |
 
+### What to type
+
+The agent only buys what the nine-item catalogue actually contains, so a request outside it is refused with a reason. The quick-prompt and attack chips cover the interesting cases. Free-text examples that work: `Find a wireless mechanical keyboard under ₹5,000, auto-buy under ₹4,000` or `Book an economy flight from New Delhi to Bangalore under ₹5,000`. Prices are in rupees, so state your budget in rupees; a budget in another currency is refused rather than guessed.
+
 ### Test suites
 
 ```bash
-# Backend: 211 tests (policy, state machine, webhooks, API, agent, crypto, benchmark)
+# Backend: 221 tests (policy, state machine, webhooks, API, agent, crypto, benchmark)
 cd backend && source .venv/bin/activate && pytest -q
 
 # Frontend: 35 tests, plus lint, typecheck and a production build
@@ -268,8 +274,8 @@ The application provides a clean fintech interface with floating pill navigation
    - **Interactive Drag-and-Drop Receipt Verifier**: Inspect `.json` receipt files to check validity.
    - **1-Click Tamper Simulation**:
      - *Verify Authentic Receipt*: Evaluates HMAC-SHA256 signature against canonical digest (100% match).
-     - *Simulate Tampered Amount (+₹1,000 Drift)*: Immediately flags cryptographic mismatch.
-     - *Simulate Tampered Merchant*: Detects vendor phishing and payload manipulation.
+     - *Tamper Price (+₹1,000 Drift)*: Immediately flags cryptographic mismatch.
+     - *Tamper Merchant Identity*: Detects vendor phishing and payload manipulation.
    - In-card JSON inspector for dispute resolution review.
    - Direct link to interactive OpenAPI docs (`/docs`).
 
