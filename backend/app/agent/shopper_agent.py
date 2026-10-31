@@ -367,6 +367,8 @@ class ShopperAgent:
         )
 
         requirements = parse_requirements(user_prompt)
+        agent_choice = None
+        agent_trace: list = []
 
         if not target_product:
             ranked = search_catalogue(
@@ -386,23 +388,43 @@ class ShopperAgent:
                 )
             ]
 
-            # Among genuine matches, prefer ones that fit the authorised budget; if none
-            # do, keep the ranking so the policy engine shows the rejection
-            def total(c: Product) -> float:
-                return c.unit_price * requirements.quantity + c.shipping_fee + c.tax_fee
+            # Let the model choose first. Its pick only counts if it is one of the genuine
+            # matches above, so it cannot pick something the request or persona rules out.
+            from app.agent.tool_agent import choose_product
 
-            within = [c for c in candidates if total(c) <= policy.maximum_total]
-            candidates = within or candidates
-            # Find best candidate within target category
-            for cand in candidates:
-                if preferred_cat and (
-                    preferred_cat.lower() in cand.category.lower()
-                    or cand.category.lower() in preferred_cat.lower()
-                ):
-                    target_product = cand
-                    break
-            if not target_product and candidates:
-                target_product = candidates[0]
+            picked = choose_product(user_prompt, policy)
+            if picked:
+                agent_trace = list(picked.trace)
+                match = next((c for c in candidates if c.sku == picked.sku), None)
+                if match:
+                    target_product, agent_choice = match, picked
+                else:
+                    agent_trace.append(
+                        {
+                            "tool": "verifier",
+                            "args": {"sku": picked.sku},
+                            "summary": "Rejected: does not satisfy the request, so the deterministic search decides.",
+                        }
+                    )
+
+            if not target_product:
+                # Among genuine matches, prefer ones that fit the authorised budget; if none
+                # do, keep the ranking so the policy engine shows the rejection
+                def total(c: Product) -> float:
+                    return c.unit_price * requirements.quantity + c.shipping_fee + c.tax_fee
+
+                within = [c for c in candidates if total(c) <= policy.maximum_total]
+                candidates = within or candidates
+                # Find best candidate within target category
+                for cand in candidates:
+                    if preferred_cat and (
+                        preferred_cat.lower() in cand.category.lower()
+                        or cand.category.lower() in preferred_cat.lower()
+                    ):
+                        target_product = cand
+                        break
+                if not target_product and candidates:
+                    target_product = candidates[0]
 
             if not target_product:
                 raise NoMatchingProductError(
@@ -459,23 +481,28 @@ class ShopperAgent:
         rationale: Optional[str] = None
         source_tag: str = ""
 
-        try:
-            from app.agent.gemini_client import GeminiClient
+        if agent_choice and agent_choice.reason:
+            rationale = agent_choice.reason
+            source_tag = "[Chosen by Gemini 2.5 Flash via tool calls]"
 
-            rationale = GeminiClient.generate_recommendation_rationale(
-                user_prompt=user_prompt,
-                product_name=target_product.name,
-                product_merchant=target_product.merchant,
-                unit_price=target_product.unit_price,
-                currency=proposal.currency,
-                product_desc=target_product.description,
-                verified_facts=facts,
-                quantity=requirements.quantity,
-            )
-            if rationale:
-                source_tag = "[Powered by Gemini 2.5 Flash]"
-        except Exception:
-            rationale = None
+        if not rationale:  # the tool call may already have carried one
+            try:
+                from app.agent.gemini_client import GeminiClient
+
+                rationale = GeminiClient.generate_recommendation_rationale(
+                    user_prompt=user_prompt,
+                    product_name=target_product.name,
+                    product_merchant=target_product.merchant,
+                    unit_price=target_product.unit_price,
+                    currency=proposal.currency,
+                    product_desc=target_product.description,
+                    verified_facts=facts,
+                    quantity=requirements.quantity,
+                )
+                if rationale:
+                    source_tag = "[Powered by Gemini 2.5 Flash]"
+            except Exception:
+                rationale = None
 
         if not rationale:
             try:
@@ -558,4 +585,6 @@ class ShopperAgent:
             "recommendation_explanation": explanation,
             "proposal": proposal,
             "product": target_product,
+            "agent_mode": "gemini_tools" if agent_choice else "deterministic",
+            "agent_trace": agent_trace,
         }

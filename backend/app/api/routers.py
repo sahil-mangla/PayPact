@@ -238,6 +238,8 @@ async def create_proposal(req: CreateProposalRequest):
         "recommendation_explanation": agent_res["recommendation_explanation"],
         "proposal": proposal,
         "product": agent_res["product"],
+        "agent_mode": agent_res.get("agent_mode", "deterministic"),
+        "agent_trace": agent_res.get("agent_trace", []),
         "failure_reason": session.failure_reason,
     }
 

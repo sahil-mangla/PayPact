@@ -151,6 +151,47 @@ class GeminiClient:
         return None
 
     @classmethod
+    def chat_with_tools(
+        cls,
+        contents: List[Dict[str, Any]],
+        function_declarations: List[Dict[str, Any]],
+        system_instruction: str,
+        allowed_functions: Optional[List[str]] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """One function-calling turn. Returns the model's content dict, or None on any failure.
+
+        Mode ANY makes the model answer with a tool call rather than prose, so the agent
+        loop only ever has to handle structured calls. Each turn is one billable call.
+        """
+        key = cls.get_api_key()
+        if not key or not cls._consume_daily_budget():
+            return None
+
+        calling_config: Dict[str, Any] = {"mode": "ANY"}
+        if allowed_functions:
+            calling_config["allowedFunctionNames"] = allowed_functions
+        payload = {
+            "systemInstruction": {"parts": [{"text": system_instruction}]},
+            "contents": contents,
+            "tools": [{"functionDeclarations": function_declarations}],
+            "toolConfig": {"functionCallingConfig": calling_config},
+            "generationConfig": {"temperature": 0.1, "maxOutputTokens": 1200},
+        }
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
+        try:
+            with httpx.Client(timeout=GEMINI_TIMEOUT) as client:
+                res = client.post(url, json=payload, headers={"x-goog-api-key": key})
+            if res.status_code != 200:
+                logger.warning(f"Gemini tool turn failed: HTTP {res.status_code}")
+                return None
+            candidates = res.json().get("candidates", [])
+            content = candidates[0].get("content") if candidates else None
+            return content if isinstance(content, dict) else None
+        except Exception as e:
+            logger.warning(f"Gemini tool turn failed: {e}")
+            return None
+
+    @classmethod
     def generate_recommendation_rationale(
         cls,
         user_prompt: str,
