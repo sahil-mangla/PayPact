@@ -3,11 +3,12 @@ from __future__ import annotations
 import os
 import time
 from typing import Any, Dict, List, Optional
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel, Field
 
 from app.agent.shopper_agent import ShopperAgent
+from app.api.ratelimit import llm_rate_limit
 from app.catalogue.products import CATALOGUE, Product
 from app.lab.benchmark import (
     IntegrityLab,
@@ -30,17 +31,24 @@ lab = IntegrityLab()
 
 class ParseIntentRequest(BaseModel):
     prompt: str = Field(
-        ..., min_length=2, description="Natural language purchase request"
+        ...,
+        min_length=2,
+        max_length=500,
+        description="Natural language purchase request",
     )
-    user_id: str = Field(default="usr_shopper", description="User identifier")
+    user_id: str = Field(
+        default="usr_shopper", max_length=64, description="User identifier"
+    )
 
 
 class CreateProposalRequest(BaseModel):
-    prompt: str = Field(..., min_length=2)
-    policy_id: str = Field(..., min_length=1)
-    preferred_sku: Optional[str] = None
+    prompt: str = Field(..., min_length=2, max_length=500)
+    policy_id: str = Field(..., min_length=1, max_length=64)
+    preferred_sku: Optional[str] = Field(None, max_length=64)
     agent_id: Optional[str] = Field(
-        default="agent_hardware", description="Agent persona ID in swarm"
+        default="agent_hardware",
+        max_length=64,
+        description="Agent persona ID in swarm",
     )
 
 
@@ -144,7 +152,11 @@ async def get_catalogue():
 # ----------------------------------------------------
 # 2. Authorization Policies
 # ----------------------------------------------------
-@router.post("/authorizations/parse-intent", response_model=AuthorizationPolicy)
+@router.post(
+    "/authorizations/parse-intent",
+    response_model=AuthorizationPolicy,
+    dependencies=[Depends(llm_rate_limit)],
+)
 async def parse_intent_to_policy(req: ParseIntentRequest):
     """Extract structured policy constraints from natural language."""
     # The agent calls an LLM over blocking HTTP; keep that off the event loop.
@@ -190,7 +202,7 @@ async def revoke_policy(policy_id: str):
 # ----------------------------------------------------
 # 3. Agent Proposals & Checkout Lifecycle
 # ----------------------------------------------------
-@router.post("/proposals")
+@router.post("/proposals", dependencies=[Depends(llm_rate_limit)])
 async def create_proposal(req: CreateProposalRequest):
     policy = coordinator.get_policy(req.policy_id)
     if not policy:

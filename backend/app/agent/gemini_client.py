@@ -11,6 +11,8 @@ import json
 import logging
 import os
 import re
+import threading
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 import httpx
 
@@ -21,8 +23,43 @@ GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
 GEMINI_TIMEOUT = float(os.getenv("GEMINI_TIMEOUT", "8.0"))
 
 
+_budget_lock = threading.Lock()
+_budget_day = ""
+_budget_used = 0
+
+
 class GeminiClient:
     """Helper for Google Gemini API inference."""
+
+    @classmethod
+    def reset_daily_budget(cls) -> None:
+        global _budget_day, _budget_used
+        with _budget_lock:
+            _budget_day, _budget_used = "", 0
+
+    @classmethod
+    def _consume_daily_budget(cls) -> bool:
+        """Count one billable call against GEMINI_DAILY_CALL_LIMIT (default 500, 0 = unlimited).
+
+        A public demo has no per-user auth, so this caps what anonymous traffic can spend.
+        When the cap is hit callers fall back to the local/deterministic path.
+        """
+        global _budget_day, _budget_used
+        try:
+            limit = int(os.getenv("GEMINI_DAILY_CALL_LIMIT", "500"))
+        except ValueError:
+            limit = 500
+        if limit <= 0:
+            return True
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        with _budget_lock:
+            if _budget_day != today:
+                _budget_day, _budget_used = today, 0
+            if _budget_used >= limit:
+                logger.warning("Gemini daily call cap reached; using fallback.")
+                return False
+            _budget_used += 1
+            return True
 
     @classmethod
     def get_api_key(cls) -> str:
@@ -62,7 +99,7 @@ class GeminiClient:
     def parse_intent(cls, user_prompt: str) -> Optional[Dict[str, Any]]:
         """Ask Gemini model to parse purchasing intent into structured parameters."""
         key = cls.get_api_key()
-        if not key:
+        if not key or not cls._consume_daily_budget():
             return None
 
         prompt = (
@@ -127,7 +164,7 @@ class GeminiClient:
     ) -> Optional[str]:
         """Ask Gemini model to produce natural agent reasoning."""
         key = cls.get_api_key()
-        if not key:
+        if not key or not cls._consume_daily_budget():
             return None
 
         prompt = (

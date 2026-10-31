@@ -713,3 +713,62 @@ async def test_slow_llm_calls_do_not_block_other_requests(monkeypatch):
         fast_elapsed = time.monotonic() - started
         assert (await slow_call).status_code == 200
     assert fast_elapsed < 0.3
+
+
+@pytest.mark.asyncio
+async def test_oversized_prompts_are_rejected():
+    async with _client() as client:
+        resp = await client.post(
+            "/api/authorizations/parse-intent", json={"prompt": "x" * 2_000_000}
+        )
+        assert resp.status_code == 422
+        resp = await client.post(
+            "/api/proposals", json={"prompt": "y" * 501, "policy_id": "pol_x"}
+        )
+        assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_llm_endpoints_are_rate_limited_per_client(monkeypatch):
+    from app.api.ratelimit import llm_limiter
+
+    monkeypatch.setattr(llm_limiter, "_limit", lambda: 3)
+    async with _client() as client:
+        codes = [
+            (
+                await client.post(
+                    "/api/authorizations/parse-intent", json={"prompt": AUTO_PROMPT}
+                )
+            ).status_code
+            for _ in range(5)
+        ]
+        assert codes == [200, 200, 200, 429, 429]
+        # Cheap read-only endpoints are not throttled.
+        assert (await client.get("/api/catalogue")).status_code == 200
+
+
+def test_gemini_daily_call_cap_falls_back_instead_of_calling(monkeypatch):
+    import httpx
+
+    from app.agent import gemini_client
+    from app.agent.gemini_client import GeminiClient
+
+    sent = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        sent.append(request)
+        return httpx.Response(200, json={"candidates": []})
+
+    real_client = httpx.Client
+    monkeypatch.setattr(
+        gemini_client.httpx,
+        "Client",
+        lambda *a, **k: real_client(*a, **{**k, "transport": httpx.MockTransport(handler)}),
+    )
+    monkeypatch.setenv("GEMINI_DAILY_CALL_LIMIT", "2")
+    monkeypatch.setattr(GeminiClient, "get_api_key", classmethod(lambda cls: "k"))
+    GeminiClient.reset_daily_budget()
+
+    for _ in range(4):
+        GeminiClient.parse_intent("keyboard under 5000")
+    assert len(sent) == 2
