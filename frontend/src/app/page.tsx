@@ -39,7 +39,7 @@ import {
 
 import { WordByWordText } from '../components/WordByWordText';
 import ParticleMorphOrb, { AiThinkingOrb } from '../components/ui/ParticleMorphOrb';
-import { apiFetch, getApiBaseUrl } from '../lib/api';
+import { apiFetch, assertPaid, errorMessage, getApiBaseUrl } from '../lib/api';
 
 const PAYPAL_CLIENT_ID = process.env.NEXT_PUBLIC_PAYPAL_CLIENT_ID || '';
 
@@ -86,9 +86,8 @@ function PayPalCheckoutButton({
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(bodyPayload),
           });
+          if (!res.ok) throw new Error(await errorMessage(res, 'Backend error'));
           const data = await res.json();
-
-          if (!res.ok) throw new Error(data.detail || 'Backend error');
 
           const session = data.session;
           if (session?.state === 'POLICY_REJECTED' || session?.state === 'FAILED') {
@@ -103,8 +102,9 @@ function PayPalCheckoutButton({
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ paypal_order_id: sdkData.orderID }),
           });
+          if (!res.ok) throw new Error(await errorMessage(res, 'Payment capture failed'));
           const data = await res.json();
-          if (!res.ok) throw new Error(data.detail || 'Payment capture failed');
+          assertPaid(data.session);
           onSuccess(data.session);
         }}
         onError={(err) => {
@@ -386,7 +386,7 @@ export default function Home() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ prompt: activePrompt, user_id: 'usr_shopper' }),
       });
-      if (!parseRes.ok) throw new Error('Could not parse purchase goal.');
+      if (!parseRes.ok) throw new Error(await errorMessage(parseRes, 'Could not parse purchase goal.'));
       const parsedPolicy = await parseRes.json();
 
       setPipelineStep(2);
@@ -397,7 +397,7 @@ export default function Home() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(parsedPolicy),
       });
-      if (!regRes.ok) throw new Error('Could not register policy rules.');
+      if (!regRes.ok) throw new Error(await errorMessage(regRes, 'Could not register policy rules.'));
       const savedPolicy = await regRes.json();
       setPolicy(savedPolicy);
 
@@ -423,8 +423,7 @@ export default function Home() {
         body: JSON.stringify({ prompt: activePrompt, policy_id: policyId, agent_id: activeAgent }),
       });
       if (!propRes.ok) {
-        const err = await propRes.json();
-        throw new Error(err.detail || 'Could not generate item proposal');
+        throw new Error(await errorMessage(propRes, 'Could not generate item proposal'));
       }
       const data = await propRes.json();
       setProposalRes(data);
@@ -489,7 +488,7 @@ export default function Home() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ checkout_id: checkoutId, event_type: eventType }),
       });
-      if (!res.ok) throw new Error('Webhook test failed');
+      if (!res.ok) throw new Error(await errorMessage(res, 'Webhook test failed'));
       const data = await res.json();
       setCheckoutSession(data.session);
       setWebhookStatus(`Webhook confirmed: ${eventType} (Order state: ${data.session.state})`);
@@ -508,7 +507,7 @@ export default function Home() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ user_id: 'usr_shopper' }),
       });
-      if (!res.ok) throw new Error('Approval failed.');
+      if (!res.ok) throw new Error(await errorMessage(res, 'Approval failed.'));
       const updated = await res.json();
       setProposalRes((prev: any) => ({ ...prev, state: updated.state }));
     } catch (err: any) {

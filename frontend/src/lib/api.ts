@@ -68,3 +68,31 @@ export async function apiFetch(path: string, options?: RequestInit): Promise<Res
     clearTimeout(timer);
   }
 }
+
+/** The most useful message for a failed response: the server's reason, else `fallback`. */
+export async function errorMessage(res: Response, fallback: string): Promise<string> {
+  let detail: unknown;
+  try {
+    detail = (await res.json())?.detail;
+  } catch (_) {
+    return fallback;
+  }
+  if (typeof detail === 'string' && detail.trim()) return detail;
+  if (Array.isArray(detail)) {
+    const msgs = detail
+      .map((d) => (d && typeof d.msg === 'string' ? d.msg : null))
+      .filter((m): m is string => !!m);
+    if (msgs.length) return msgs.join('; ');
+  }
+  if (res.status === 429) return 'Too many requests. Please slow down and try again in a moment.';
+  return fallback;
+}
+
+/**
+ * A capture call can succeed over HTTP while the backend refuses the payment (for example the
+ * policy was revoked while the PayPal window was open). Only a PAID session is a success.
+ */
+export function assertPaid(session: { state?: string; failure_reason?: string | null } | undefined) {
+  if (session?.state === 'PAID') return;
+  throw new Error(session?.failure_reason || 'The payment did not complete.');
+}
