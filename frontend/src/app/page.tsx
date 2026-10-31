@@ -1474,6 +1474,24 @@ export default function Home() {
                           ? refusalReason
                           : 'Enter your purchase goal on the left. The agent will find a matching item, compute total costs, and check your policy rules.'}
                     </p>
+                    {!loading && !refusalReason && (
+                      <ol
+                        aria-label="How a purchase works"
+                        style={{ listStyle: 'none', margin: '18px 0 0', padding: 0, display: 'flex', flexDirection: 'column', gap: '8px', textAlign: 'left', fontSize: '0.78rem', color: '#334155', maxWidth: '330px' }}
+                      >
+                        {[
+                          ['The AI agent proposes', 'a specific item and total. It can never pay on its own.'],
+                          ['PayPact checks the rules', 'budget, approval, and that nothing changed.'],
+                          ['You pay with PayPal', 'the sandbox checkout moves the money, after a second check.'],
+                          ['You get a signed receipt', 'proof of exactly what was approved and paid.'],
+                        ].map(([title, detail], i) => (
+                          <li key={title} style={{ display: 'flex', gap: '10px', alignItems: 'flex-start' }}>
+                            <span aria-hidden="true" style={{ flexShrink: 0, width: '20px', height: '20px', borderRadius: '50%', background: '#e0f2fe', color: '#0369a1', fontWeight: 700, fontSize: '0.72rem', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>{i + 1}</span>
+                            <span><strong style={{ color: '#0f172a' }}>{title}:</strong> {detail}</span>
+                          </li>
+                        ))}
+                      </ol>
+                    )}
                   </div>
                 ) : (
                   <motion.div
@@ -1559,6 +1577,9 @@ export default function Home() {
                       <code style={{ fontSize: '0.75rem', color: '#475569', wordBreak: 'break-all', display: 'block' }}>
                         {proposalRes.proposal?.proposal_fingerprint}
                       </code>
+                      <p style={{ fontSize: '0.72rem', color: '#64748b', marginTop: '3px' }}>
+                        A fingerprint of exactly what you approve. If the price or item changes before payment, it no longer matches and PayPact refuses to pay.
+                      </p>
                     </div>
 
                     {/* Payment Execution Actions */}

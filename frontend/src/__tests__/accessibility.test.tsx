@@ -47,3 +47,19 @@ describe('Purchase form semantics', () => {
     expect(field).toHaveAttribute('maxlength', '500');
   });
 });
+
+
+describe('First-run explanation', () => {
+  beforeEach(() => {
+    mockMatchMedia(false);
+    global.fetch = vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve({}) }) as any;
+  });
+
+  it('explains the PayPal flow before any proposal exists', () => {
+    render(<Home />);
+    const steps = screen.getByRole('list', { name: /how a purchase works/i });
+    expect(steps.textContent).toMatch(/AI agent proposes/);
+    expect(steps.textContent).toMatch(/You pay with PayPal/);
+    expect(steps.textContent).toMatch(/signed receipt/);
+  });
+});
