@@ -476,3 +476,26 @@ def test_merchant_instructions_in_a_description_are_not_echoed_as_the_agents_wor
     _stub_rationale(monkeypatch, None)
     text = _explain(sku="KB-INJECT-01")
     assert "14500" not in text.replace(",", "") and "SKU-GOLD-99" not in text
+
+
+@pytest.mark.parametrize(
+    "prompt,category",
+    [
+        ("Order a keyboard, proceed automatically.", "mechanical keyboard"),
+        ("Buy a keyboard, I need it automated", "mechanical keyboard"),
+        ("I want a mouse, automatic purchase ok", "computer mouse"),
+        ("Book a flight to Bangalore", "travel"),
+        ("brass keyboard desk mat under 2000", "office supplies"),
+        ("two mats and a wrist rest", "office supplies"),
+    ],
+)
+def test_category_is_read_from_whole_words_not_substrings(prompt, category):
+    assert ShopperAgent._category_from_prompt(prompt) == category
+
+
+def test_automatic_wording_does_not_shrink_the_hardware_agents_quota():
+    policy = ShopperAgent.parse_intent_to_policy(
+        "Order a custom enterprise split ergonomic keyboard. Budget ceiling ₹3,000, proceed automatically."
+    )
+    assert policy.product_category == "mechanical keyboard"
+    assert policy.agent_quotas["agent_hardware"].allocated_budget == policy.maximum_total

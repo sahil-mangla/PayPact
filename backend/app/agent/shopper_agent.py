@@ -62,61 +62,49 @@ class ShopperAgent:
         )
 
     @staticmethod
+    def _mentions(text: str, words: list) -> bool:
+        """True if any of `words` appears in `text` as a whole word (optionally pluralised).
+
+        Substring matching misread "automatically" as a request for a mat.
+        """
+        pattern = r"\b(?:" + "|".join(re.escape(w) for w in words) + r")(?:s|es)?\b"
+        return re.search(pattern, text.lower()) is not None
+
+    @staticmethod
     def _category_from_prompt(user_prompt: str) -> Optional[str]:
         """Deterministic keyword classification of the purchase category, or None."""
+        mentions = ShopperAgent._mentions
         prompt_lower = user_prompt.lower()
-        if any(
-            k in prompt_lower
-            for k in [
+        if mentions(
+            prompt_lower,
+            [
                 "flight",
-                "flights",
                 "hotel",
                 "ticket",
-                "tickets",
                 "bangalore",
                 "blr",
                 "delhi",
                 "airline",
                 "travel",
                 "transit",
-            ]
+            ],
         ):
             return "travel"
-        if any(
-            k in prompt_lower
-            for k in [
-                "mat",
-                "mats",
-                "wrist",
-                "dock",
-                "supplies",
-                "desk",
-                "cable",
-                "organizer",
-                "tray",
-            ]
+        if mentions(
+            prompt_lower,
+            ["mat", "wrist", "dock", "supplies", "desk", "cable", "organizer", "tray"],
         ):
             return "office supplies"
-        if any(
-            k in prompt_lower
-            for k in [
-                "keyboard",
-                "keyboards",
-                "switch",
-                "switches",
-                "keycap",
-                "keycaps",
-                "keychron",
-                "meckeys",
-                "typing",
-            ]
+        if mentions(
+            prompt_lower,
+            ["keyboard", "switch", "keycap", "keychron", "meckeys", "typing"],
         ):
             return "mechanical keyboard"
         if "mouse pad" in prompt_lower or "mousepad" in prompt_lower:
             return "office supplies"
-        if "mouse" in prompt_lower:
+        if mentions(prompt_lower, ["mouse", "mice"]):
             return "computer mouse"
-        if "monitor" in prompt_lower:
+        if mentions(prompt_lower, ["monitor"]):
             return "computer monitor"
         return None
 
@@ -175,14 +163,12 @@ class ShopperAgent:
         if llm_data and isinstance(llm_data, dict):
             if "category" in llm_data and llm_data["category"]:
                 cat_str = str(llm_data["category"]).lower()
-                if any(
-                    k in cat_str
-                    for k in ["flight", "travel", "hotel", "airline", "ticket"]
+                if cls._mentions(
+                    cat_str, ["flight", "travel", "hotel", "airline", "ticket"]
                 ):
                     category = "travel"
-                elif any(
-                    k in cat_str
-                    for k in ["mat", "dock", "supplies", "desk", "organizer", "wrist"]
+                elif cls._mentions(
+                    cat_str, ["mat", "dock", "supplies", "desk", "organizer", "wrist"]
                 ):
                     category = "office supplies"
                 elif "keyboard" in cat_str:
