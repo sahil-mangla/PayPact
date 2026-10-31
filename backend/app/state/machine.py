@@ -21,6 +21,10 @@ from app.payments.paypal_client import PayPalClient, PayPalOrderResponse
 from app.policy.engine import DeterministicPolicyEngine
 
 
+class CheckoutNotFoundError(ValueError):
+    """No checkout exists with the given id (the API maps this to a 404)."""
+
+
 # PayPal order ids are short alphanumeric tokens; anything else never reaches a PayPal URL.
 ORDER_ID_RE = re.compile(r"[A-Za-z0-9-]{1,64}")
 
@@ -238,14 +242,14 @@ class TransactionCoordinator:
         """User explicitly approves the proposal."""
         session = self._sessions.get(checkout_id)
         if not session:
-            raise ValueError(f"Checkout '{checkout_id}' not found.")
+            raise CheckoutNotFoundError(f"Checkout '{checkout_id}' not found.")
 
         if session.state not in (
             TransactionState.AWAITING_APPROVAL,
             TransactionState.AUTHORIZED,
         ):
             raise ValueError(
-                f"Cannot approve checkout in state '{session.state}'. Must be AWAITING_APPROVAL or AUTHORIZED."
+                f"Cannot approve checkout in state '{session.state.value}'. Must be AWAITING_APPROVAL or AUTHORIZED."
             )
 
         fp = session.proposal.proposal_fingerprint or compute_proposal_fingerprint(
@@ -283,7 +287,7 @@ class TransactionCoordinator:
         """Execute checkout with Pre-Execution Lifecycle Gate and duplicate protection."""
         session = self._sessions.get(checkout_id)
         if not session:
-            raise ValueError(f"Checkout '{checkout_id}' not found.")
+            raise CheckoutNotFoundError(f"Checkout '{checkout_id}' not found.")
 
         lock = self._get_execution_lock(checkout_id)
         async with lock:
@@ -299,7 +303,7 @@ class TransactionCoordinator:
             # Verify state is AUTHORIZED
             if session.state != TransactionState.AUTHORIZED:
                 raise ValueError(
-                    f"Cannot execute checkout in state '{session.state}'. Must be AUTHORIZED."
+                    f"Cannot execute checkout in state '{session.state.value}'. Must be AUTHORIZED."
                 )
 
             # 2. Pre-Execution Invariant Gate
@@ -421,7 +425,7 @@ class TransactionCoordinator:
         Does NOT capture — buyer must approve via JS SDK popup first."""
         session = self._sessions.get(checkout_id)
         if not session:
-            raise ValueError(f"Checkout '{checkout_id}' not found.")
+            raise CheckoutNotFoundError(f"Checkout '{checkout_id}' not found.")
 
         lock = self._get_execution_lock(checkout_id)
         async with lock:
@@ -438,7 +442,7 @@ class TransactionCoordinator:
 
             if session.state != TransactionState.AUTHORIZED:
                 raise ValueError(
-                    f"Cannot execute checkout in state '{session.state}'. Must be AUTHORIZED."
+                    f"Cannot execute checkout in state '{session.state.value}'. Must be AUTHORIZED."
                 )
 
             policy = self._policies.get(session.policy_id)
@@ -521,7 +525,7 @@ class TransactionCoordinator:
         """Live sandbox phase-2: Capture after buyer approved via PayPal JS SDK popup."""
         session = self._sessions.get(checkout_id)
         if not session:
-            raise ValueError(f"Checkout '{checkout_id}' not found.")
+            raise CheckoutNotFoundError(f"Checkout '{checkout_id}' not found.")
 
         if not ORDER_ID_RE.fullmatch(paypal_order_id or ""):
             raise ValueError("Malformed PayPal order ID.")
@@ -538,7 +542,7 @@ class TransactionCoordinator:
 
             if session.state != TransactionState.CHECKOUT_CREATED:
                 raise ValueError(
-                    f"Cannot capture checkout in state '{session.state}'. Must be CHECKOUT_CREATED."
+                    f"Cannot capture checkout in state '{session.state.value}'. Must be CHECKOUT_CREATED."
                 )
 
             # Only the order this checkout created may be captured through it.
@@ -629,7 +633,7 @@ class TransactionCoordinator:
         """Reconcile ambiguous timeout with PayPal."""
         session = self._sessions.get(checkout_id)
         if not session:
-            raise ValueError(f"Cannot reconcile checkout '{checkout_id}'.")
+            raise CheckoutNotFoundError(f"Checkout '{checkout_id}' not found.")
 
         async with self._get_execution_lock(checkout_id):
             # Already settled: reconciling again must never touch the budget a second time.
@@ -638,7 +642,7 @@ class TransactionCoordinator:
 
             if session.state != TransactionState.RECONCILIATION_REQUIRED:
                 raise ValueError(
-                    f"Cannot reconcile checkout in state '{session.state}'. "
+                    f"Cannot reconcile checkout in state '{session.state.value}'. "
                     "Must be RECONCILIATION_REQUIRED."
                 )
 
@@ -841,7 +845,7 @@ class TransactionCoordinator:
         """Generate tamper-evident, digitally signed audit receipt for a checkout session."""
         session = self._sessions.get(checkout_id)
         if not session:
-            raise ValueError(f"Checkout '{checkout_id}' not found.")
+            raise CheckoutNotFoundError(f"Checkout '{checkout_id}' not found.")
 
         return generate_signed_receipt(
             checkout_id=checkout_id,

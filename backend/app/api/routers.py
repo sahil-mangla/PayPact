@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel, Field
@@ -20,9 +20,19 @@ from app.models.schemas import (
     PurchaseProposal,
     SignedAuditReceipt,
 )
-from app.state.machine import CheckoutSession, TransactionCoordinator
+from app.state.machine import (
+    CheckoutNotFoundError,
+    CheckoutSession,
+    TransactionCoordinator,
+)
 
 router = APIRouter(prefix="/api")
+
+def _checkout_error(e: Exception) -> HTTPException:
+    """404 for an unknown checkout, 400 for anything the state machine refuses."""
+    status = 404 if isinstance(e, CheckoutNotFoundError) else 400
+    return HTTPException(status_code=status, detail=str(e))
+
 
 # Global singleton coordinator & lab for the app
 coordinator = TransactionCoordinator()
@@ -67,12 +77,12 @@ class ApproveProposalRequest(BaseModel):
 
 
 class ExecutePaymentRequest(BaseModel):
-    simulate_drift_type: Optional[str] = Field(
+    simulate_drift_type: Optional[Literal["price_drift", "sku_substitution", "timeout"]] = Field(
         None,
         description="Optional simulation: 'price_drift', 'sku_substitution', 'timeout'",
     )
-    drift_shipping_fee: Optional[float] = None
-    drift_sku: Optional[str] = None
+    drift_shipping_fee: Optional[float] = Field(None, ge=0, le=1_000_000)
+    drift_sku: Optional[str] = Field(None, max_length=64)
 
 
 class CapturePaymentRequest(BaseModel):
@@ -86,10 +96,8 @@ class CapturePaymentRequest(BaseModel):
 
 
 class LabRunRequest(BaseModel):
-    scenario_id: Optional[str] = None
-    system_type: str = Field(
-        default="PROPOSED_APIL"
-    )  # BASELINE_A, BASELINE_B, PROPOSED_APIL
+    scenario_id: Optional[str] = Field(None, max_length=16)
+    system_type: Literal["BASELINE_A", "BASELINE_B", "PROPOSED_APIL"] = "PROPOSED_APIL"
 
 
 # ----------------------------------------------------
@@ -239,7 +247,7 @@ async def approve_checkout(checkout_id: str, req: ApproveProposalRequest):
     try:
         return coordinator.approve_proposal(checkout_id, user_id=req.user_id)
     except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise _checkout_error(e)
 
 
 @router.post("/checkouts/{checkout_id}/execute")
@@ -327,7 +335,7 @@ async def execute_checkout(checkout_id: str, req: ExecutePaymentRequest):
                 "approve_url": approve_url,
             }
     except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise _checkout_error(e)
 
 
 @router.post("/checkouts/{checkout_id}/capture")
@@ -349,7 +357,7 @@ async def capture_checkout(checkout_id: str, req: CapturePaymentRequest):
         )
         return {"session": updated_session, "paypal_mode": "live_sandbox"}
     except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise _checkout_error(e)
 
 
 @router.post("/checkouts/{checkout_id}/reconcile", response_model=CheckoutSession)
@@ -357,7 +365,7 @@ async def reconcile_checkout(checkout_id: str):
     try:
         return await coordinator.reconcile_timeout(checkout_id)
     except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise _checkout_error(e)
 
 
 @router.get("/checkouts/{checkout_id}", response_model=CheckoutSession)
@@ -374,7 +382,7 @@ async def get_checkout_receipt(checkout_id: str):
     try:
         return coordinator.generate_audit_receipt(checkout_id)
     except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise _checkout_error(e)
 
 
 @router.get("/receipt/sample")
@@ -547,6 +555,10 @@ async def list_scenarios():
 @router.post("/lab/run")
 async def run_lab_test(req: LabRunRequest):
     if req.scenario_id:
+        if req.scenario_id not in {d.scenario_id for d in SCENARIO_DEFINITIONS}:
+            raise HTTPException(
+                status_code=404, detail=f"Unknown scenario '{req.scenario_id}'."
+            )
         result = await lab.run_scenario(req.scenario_id, system_type=req.system_type)
         return {"single_run": result}
     else:
