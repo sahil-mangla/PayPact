@@ -289,6 +289,50 @@ describe('Decision explanation on the proposal card', () => {
 });
 
 
+describe('Agent trace on the proposal card', () => {
+  const run = async (extra: any) => {
+    localStorage.clear();
+    global.fetch = vi.fn().mockImplementation((url: string) => {
+      const json = (b: any) => Promise.resolve({ ok: true, json: () => Promise.resolve(b) });
+      if (url.includes('/health')) return json({ status: 'healthy', paypal_mode: 'mock', ollama: {} });
+      if (url.includes('/authorizations')) return json(MOCK_POLICY);
+      if (url.includes('/proposals')) return json({ ...MOCK_PROPOSAL_RES, ...extra });
+      return json([]);
+    }) as any;
+    render(<Home />);
+    fireEvent.click(screen.getByText('Generate Proposal & Check Rules'));
+    await screen.findByTestId('decision-note');
+  };
+
+  it('lists the tool calls Gemini made to choose the product', async () => {
+    await run({
+      agent_mode: 'gemini_tools',
+      agent_trace: [
+        { tool: 'search_products', args: { query: 'keyboard' }, summary: 'Found: KB-Q1-PRO' },
+        { tool: 'choose_product', args: { sku: 'KB-Q1-PRO' }, summary: 'Chose product' },
+      ],
+    });
+    const trace = screen.getByTestId('agent-trace');
+    expect(trace.textContent).toContain('Gemini chose this in 2 tool calls');
+    expect(trace.textContent).toContain('search_products');
+    expect(trace.textContent).toContain('Found: KB-Q1-PRO');
+  });
+
+  it('says so when the verifier overrode the pick, and shows nothing without a trace', async () => {
+    await run({
+      agent_mode: 'deterministic',
+      agent_trace: [{ tool: 'verifier', args: { sku: 'TR-FLIGHT-BLR' }, summary: 'Rejected: does not satisfy the request' }],
+    });
+    expect(screen.getByTestId('agent-trace').textContent).toContain('Gemini’s pick was not used');
+  });
+
+  it('is absent when the deterministic agent ran alone', async () => {
+    await run({ agent_mode: 'deterministic', agent_trace: [] });
+    expect(screen.queryByTestId('agent-trace')).not.toBeInTheDocument();
+  });
+});
+
+
 describe('Honest status when things go wrong', () => {
   it('shows a connection problem, not a security notice, when the backend is unreachable', async () => {
     localStorage.clear();

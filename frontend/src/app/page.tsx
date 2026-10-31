@@ -1653,6 +1653,26 @@ export default function Home() {
                       <WordByWordText text={proposalRes.recommendation_explanation} />
                     </div>
 
+                    {/* Tool calls the model made to pick this product */}
+                    {Array.isArray(proposalRes.agent_trace) && proposalRes.agent_trace.length > 0 && (
+                      <details data-testid="agent-trace" style={{ marginBottom: '8px', fontSize: '0.74rem', color: '#334155' }}>
+                        <summary style={{ cursor: 'pointer', fontWeight: 600 }}>
+                          {proposalRes.agent_mode === 'gemini_tools'
+                            ? `Gemini chose this in ${proposalRes.agent_trace.length} tool calls`
+                            : 'Gemini’s pick was not used'}
+                        </summary>
+                        <ol style={{ margin: '5px 0 0', paddingLeft: '18px', lineHeight: 1.45 }}>
+                          {proposalRes.agent_trace.map((step: any, i: number) => (
+                            <li key={i}>
+                              <code>{step.tool}</code>
+                              {step.args?.query ? ` “${step.args.query}”` : step.args?.sku ? ` ${step.args.sku}` : ''}
+                              {step.summary ? ` — ${step.summary}` : ''}
+                            </li>
+                          ))}
+                        </ol>
+                      </details>
+                    )}
+
                     {/* Price Breakdown */}
                     <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', padding: '9px 11px', borderRadius: '6px', marginBottom: '8px' }}>
                       {[
