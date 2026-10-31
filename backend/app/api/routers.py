@@ -239,6 +239,23 @@ async def get_policy(policy_id: str):
     return policy
 
 
+@router.get(
+    "/authorizations/{policy_id}/checkouts", dependencies=[Depends(token_rate_limit)]
+)
+async def list_policy_checkouts(
+    policy_id: str,
+    x_owner_token: Optional[str] = Header(None, alias=OWNER_TOKEN_HEADER),
+):
+    """The checkouts opened under this policy (by the web agent or an MCP agent), newest first.
+
+    Owner-only: this is how the owner finds a request that is waiting for their approval.
+    """
+    if not coordinator.get_policy(policy_id):
+        raise HTTPException(status_code=404, detail="Policy not found.")
+    _require_owner(policy_id, x_owner_token, "list-checkouts")
+    return coordinator.list_policy_checkouts(policy_id)
+
+
 @router.post(
     "/authorizations/{policy_id}/revoke", dependencies=[Depends(token_rate_limit)]
 )

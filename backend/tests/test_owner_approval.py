@@ -350,3 +350,67 @@ async def test_token_endpoints_are_rate_limited(monkeypatch):
         ]
         assert codes[:3] == [404, 404, 404]
         assert codes[3:] == [429, 429]
+
+
+@pytest.mark.asyncio
+async def test_owner_can_list_their_policys_checkouts_newest_first():
+    async with _client() as client:
+        token, policy_id, first = await _awaiting(client)
+        second = (
+            await client.post(
+                "/api/proposals",
+                json={
+                    "prompt": "Keychron K2 wireless mechanical keyboard",
+                    "policy_id": policy_id,
+                    "agent_id": "agent_outside",
+                },
+            )
+        ).json()["checkout_id"]
+        # A checkout under another policy must not leak into this list.
+        _, _, foreign = await _awaiting(client)
+
+        resp = await client.get(
+            f"/api/authorizations/{policy_id}/checkouts", headers={OWNER: token}
+        )
+        assert resp.status_code == 200
+        rows = resp.json()
+        assert [r["checkout_id"] for r in rows] == [second, first]
+        assert foreign not in [r["checkout_id"] for r in rows]
+        row = rows[0]
+        assert row["agent_id"] == "agent_outside"
+        assert rows[1]["state"] == "AWAITING_APPROVAL"
+        assert rows[1]["failure_reason"] is None
+        if row["state"] == "POLICY_REJECTED":
+            assert row["failure_reason"]
+        assert row["merchant"] and row["currency"] and row["total_amount"] > 0
+        assert row["items"][0]["name"]
+        assert row["created_at"]
+        assert "failure_reason" in row
+        # Never carries a secret.
+        assert token not in resp.text
+        assert "_owner_token_hash" not in resp.text
+
+
+@pytest.mark.asyncio
+async def test_listing_checkouts_requires_the_owner_token_and_is_audited():
+    async with _client() as client:
+        token, policy_id, _ = await _awaiting(client)
+        url = f"/api/authorizations/{policy_id}/checkouts"
+
+        assert (await client.get(url)).status_code == 401
+        assert (await client.get(url, headers={OWNER: "guess"})).status_code == 403
+        other_token, _, _ = await _awaiting(client)
+        assert (await client.get(url, headers={OWNER: other_token})).status_code == 403
+        assert (await client.get(url, headers={OWNER: token})).status_code == 200
+
+        denied = [e for e in _denied_events() if e.metadata["action"] == "list-checkouts"]
+        assert len(denied) == 3
+
+
+@pytest.mark.asyncio
+async def test_listing_checkouts_for_an_unknown_policy_is_404():
+    async with _client() as client:
+        resp = await client.get(
+            "/api/authorizations/pol_nope/checkouts", headers={OWNER: "x"}
+        )
+        assert resp.status_code == 404

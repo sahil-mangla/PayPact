@@ -6,7 +6,7 @@ import re
 import secrets
 import uuid
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, Field
 
 from app.audit.ledger import AuditLedger
@@ -909,6 +909,36 @@ class TransactionCoordinator:
 
     def get_session(self, checkout_id: str) -> Optional[CheckoutSession]:
         return self._sessions.get(checkout_id)
+
+    def list_policy_checkouts(self, policy_id: str) -> List[Dict[str, Any]]:
+        """Summaries of every checkout opened under a policy, newest first.
+
+        The creation time comes from the checkout's POLICY_EVALUATED audit event, since the
+        session itself carries no timestamp.
+        """
+        created: Dict[str, str] = {}
+        for event in self.audit_ledger.get_events(event_type="POLICY_EVALUATED"):
+            if event.checkout_id and event.checkout_id not in created:
+                created[event.checkout_id] = event.timestamp.isoformat()
+        rows = []
+        for session in reversed(list(self._sessions.values())):
+            if session.policy_id != policy_id:
+                continue
+            proposal = session.proposal
+            rows.append(
+                {
+                    "checkout_id": session.checkout_id,
+                    "state": session.state.value,
+                    "agent_id": proposal.agent_id,
+                    "merchant": proposal.merchant,
+                    "items": [item.model_dump() for item in proposal.items],
+                    "total_amount": proposal.total_amount,
+                    "currency": proposal.currency,
+                    "created_at": created.get(session.checkout_id),
+                    "failure_reason": session.failure_reason,
+                }
+            )
+        return rows
 
     def _record_spend(
         self, policy_id: str, amount: float, agent_id: Optional[str] = None
