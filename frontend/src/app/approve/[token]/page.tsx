@@ -186,15 +186,15 @@ export default function ApprovePage({ params }: { params: { token: string } }) {
               ))}
             </ul>
 
-            <dl style={{ fontSize: '0.85rem', display: 'grid', gridTemplateColumns: '1fr auto', gap: '3px 12px', marginBottom: '8px' }}>
+            <dl style={{ fontSize: '0.85rem', display: 'grid', gridTemplateColumns: '1fr auto', gap: '3px 0', marginBottom: '8px' }}>
               <dt style={{ color: '#526077' }}>Subtotal</dt>
-              <dd style={{ textAlign: 'right' }}>{money(summary.item_subtotal, summary.currency)}</dd>
+              <dd style={{ textAlign: 'right', paddingLeft: '12px' }}>{money(summary.item_subtotal, summary.currency)}</dd>
               <dt style={{ color: '#526077' }}>Shipping</dt>
-              <dd style={{ textAlign: 'right' }}>{money(summary.shipping_fee, summary.currency)}</dd>
+              <dd style={{ textAlign: 'right', paddingLeft: '12px' }}>{money(summary.shipping_fee, summary.currency)}</dd>
               <dt style={{ color: '#526077' }}>Tax</dt>
-              <dd style={{ textAlign: 'right' }}>{money(summary.tax_fee, summary.currency)}</dd>
+              <dd style={{ textAlign: 'right', paddingLeft: '12px' }}>{money(summary.tax_fee, summary.currency)}</dd>
               <dt style={{ fontWeight: 700, borderTop: '1px solid #e2e8f0', paddingTop: '6px' }}>Total</dt>
-              <dd style={{ textAlign: 'right', fontWeight: 700, fontSize: '1.05rem', color: '#0070ba', borderTop: '1px solid #e2e8f0', paddingTop: '6px' }}>
+              <dd style={{ textAlign: 'right', paddingLeft: '12px', fontWeight: 700, fontSize: '1.05rem', color: '#0070ba', borderTop: '1px solid #e2e8f0', paddingTop: '6px' }}>
                 {money(summary.total_amount, summary.currency)} {summary.currency}
               </dd>
             </dl>

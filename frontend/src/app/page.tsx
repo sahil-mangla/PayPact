@@ -1454,7 +1454,7 @@ export default function Home() {
                         <Lock size={14} color={policy.is_revoked ? '#b91c1c' : '#0070ba'} />
                         <h4 style={{ fontSize: '0.86rem', fontWeight: 700, color: '#0f172a' }}>Active Policy Rules</h4>
                         <span className="badge badge-neutral" style={{ fontSize: '0.75rem', padding: '1px 5px' }}>
-                          Policy ID: {policy.policy_id?.slice(0, 10) || 'Active'}
+                          Policy ID: {policy.policy_id || 'Active'}
                         </span>
                       </div>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>

@@ -9,7 +9,8 @@ describe('humanizeEvent', () => {
   });
 
   it('labels refused approvals and approval links in plain words', () => {
-    expect(humanizeEvent('APPROVAL_DENIED')).toBe('Approval refused (not the owner)');
+    // Also used for used or expired links, so the label must not claim "not the owner".
+    expect(humanizeEvent('APPROVAL_DENIED')).toBe('Approval refused');
     expect(humanizeEvent('APPROVAL_LINK_CREATED')).toBe('Approval link created');
   });
 });

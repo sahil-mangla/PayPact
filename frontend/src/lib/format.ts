@@ -2,7 +2,7 @@
 
 // Events whose code reads badly when only de-capitalised.
 const EVENT_LABELS: Record<string, string> = {
-  APPROVAL_DENIED: 'Approval refused (not the owner)',
+  APPROVAL_DENIED: 'Approval refused',
   APPROVAL_LINK_CREATED: 'Approval link created',
 };
 

@@ -122,6 +122,8 @@ describe('owner token in the dashboard', () => {
     await startFlow();
     expect(screen.getByRole('heading', { name: 'Agent requests' })).toBeInTheDocument();
     expect(screen.getByTestId('policy-id')).toHaveTextContent('pol_owner_01');
+    // The rules card shows the same full id, not a truncated one the owner could not paste into an agent.
+    expect(screen.getByText('Policy ID: pol_owner_01')).toBeInTheDocument();
     await waitFor(() => expect(headerOf('/authorizations/pol_owner_01/checkouts')).toBe('otok_secret'));
   });
 });
