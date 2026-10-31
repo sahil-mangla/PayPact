@@ -287,3 +287,27 @@ describe('Decision explanation on the proposal card', () => {
     expect(screen.queryByText('Blocked')).not.toBeInTheDocument();
   });
 });
+
+
+describe('Honest status when things go wrong', () => {
+  it('shows a connection problem, not a security notice, when the backend is unreachable', async () => {
+    localStorage.clear();
+    global.fetch = vi.fn().mockRejectedValue(new TypeError('Failed to fetch')) as any;
+    render(<Home />);
+    fireEvent.click(screen.getByText('Generate Proposal & Check Rules'));
+
+    expect(await screen.findByText('Connection problem')).toBeInTheDocument();
+    expect(screen.getAllByText(/can't reach the server/i).length).toBeGreaterThan(0);
+    expect(screen.queryByText('Security & Policy Notice')).not.toBeInTheDocument();
+    expect(screen.queryByText('System Ready')).not.toBeInTheDocument();
+  });
+
+  it('does not describe the prompt-injection chip as something PayPact "rejects" outright', async () => {
+    localStorage.clear();
+    global.fetch = vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve({}) }) as any;
+    render(<Home />);
+    expect(screen.getByText('Prompt Injection Bypass')).toBeInTheDocument();
+    fireEvent.click(screen.getByText('Prompt Injection Bypass'));
+    expect(await screen.findByText(/isn't in the catalogue|not in the catalogue/i)).toBeInTheDocument();
+  });
+});

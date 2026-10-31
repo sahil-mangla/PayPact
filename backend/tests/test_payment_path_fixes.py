@@ -1000,3 +1000,19 @@ async def test_capture_rechecks_the_budget_when_the_reservation_has_lapsed():
     assert late.state.value == "POLICY_REJECTED"
     policy = coordinator.get_policy(first.policy_id)
     assert policy.spent_total <= policy.maximum_total
+
+
+@pytest.mark.asyncio
+async def test_the_reject_over_budget_quick_prompt_ends_in_a_policy_rejection():
+    prompt = "Search for custom brass keyboard. Budget ceiling ₹3,000."
+    async with _client() as client:
+        intent = (
+            await client.post("/api/authorizations/parse-intent", json={"prompt": prompt})
+        ).json()
+        policy = (await client.post("/api/authorizations", json=intent)).json()
+        proposal = (
+            await client.post(
+                "/api/proposals", json={"prompt": prompt, "policy_id": policy["policy_id"]}
+            )
+        ).json()
+        assert proposal["state"] == "POLICY_REJECTED"

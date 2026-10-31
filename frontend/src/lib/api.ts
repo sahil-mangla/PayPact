@@ -2,6 +2,15 @@
 
 export const API_TIMEOUT_MS = 60_000;
 
+const CONNECTION_ERROR = "Can't reach the server. Check that the backend is running, then try again.";
+const TIMEOUT_ERROR =
+  'The server took too long to respond. It may be waking up from sleep, so please try again in a few seconds.';
+
+/** True for messages that mean "the request never completed", as opposed to a business refusal. */
+export function isConnectionProblem(message: string | null | undefined): boolean {
+  return !!message && (message.startsWith("Can't reach the server") || message.startsWith('The server took too long'));
+}
+
 export function getApiBaseUrl(): string {
   if (typeof window !== 'undefined') {
     // 1. A backend the user chose in the connection dialog
@@ -58,11 +67,9 @@ export async function apiFetch(path: string, options?: RequestInit): Promise<Res
       signal: options?.signal ?? controller.signal,
     });
   } catch (err) {
-    if (controller.signal.aborted) {
-      throw new Error(
-        'The server took too long to respond. It may be waking up from sleep, so please try again in a few seconds.',
-      );
-    }
+    if (controller.signal.aborted) throw new Error(TIMEOUT_ERROR);
+    // A failed network request surfaces as a bare TypeError ("Failed to fetch").
+    if (err instanceof TypeError) throw new Error(CONNECTION_ERROR);
     throw err;
   } finally {
     clearTimeout(timer);

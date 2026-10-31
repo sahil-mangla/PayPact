@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { apiFetch, API_TIMEOUT_MS, getApiBaseUrl } from '../lib/api';
+import { apiFetch, API_TIMEOUT_MS, getApiBaseUrl, isConnectionProblem } from '../lib/api';
 
 describe('apiFetch', () => {
   beforeEach(() => {
@@ -14,7 +14,7 @@ describe('apiFetch', () => {
     const fetchMock = vi.fn().mockRejectedValue(new TypeError('Failed to fetch'));
     global.fetch = fetchMock as unknown as typeof fetch;
 
-    await expect(apiFetch('/health')).rejects.toThrow('Failed to fetch');
+    await expect(apiFetch('/health')).rejects.toThrow(/can't reach the server/i);
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(String(fetchMock.mock.calls[0][0])).not.toContain('onrender.com');
@@ -98,5 +98,14 @@ describe('assertPaid', () => {
       assertPaid({ state: 'POLICY_REJECTED', failure_reason: 'Policy is revoked.' }),
     ).toThrow('Policy is revoked.');
     expect(() => assertPaid({ state: 'FAILED' })).toThrow(/did not complete/i);
+  });
+});
+
+
+describe('isConnectionProblem', () => {
+  it('recognises network and timeout failures but not business refusals', () => {
+    expect(isConnectionProblem("Can't reach the server. Check that the backend is running.")).toBe(true);
+    expect(isConnectionProblem('The server took too long to respond. It may be waking up.')).toBe(true);
+    expect(isConnectionProblem('Exceeds maximum authorized budget (4699.00 > 3000.00).')).toBe(false);
   });
 });

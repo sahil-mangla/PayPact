@@ -279,7 +279,7 @@ DEMO_PROMPTS = [
         "Find premium custom mechanical keyboard under ₹5,000. Require approval above ₹4,000.",
         "KB-Q1-PRO",
     ),
-    ("Search for custom brass keyboard. Budget ceiling ₹5,000.", "KB-Q1-PRO"),
+    ("Search for custom brass keyboard. Budget ceiling ₹3,000.", "KB-Q1-PRO"),
     (
         "Order a custom enterprise split ergonomic keyboard. Budget ceiling ₹3,000, proceed automatically.",
         "KB-Q1-PRO",
