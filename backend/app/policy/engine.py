@@ -515,6 +515,7 @@ class DeterministicPolicyEngine:
         policy: AuthorizationPolicy,
         approved_fingerprint: Optional[str] = None,
         current_time: Optional[datetime] = None,
+        approval_granted: bool = False,
     ) -> PolicyEvaluationResult:
         """Lifecycle Revalidation Gate immediately prior to PayPal execution.
 
@@ -559,7 +560,8 @@ class DeterministicPolicyEngine:
         # The user's approval of this exact fingerprint is what resolves "approval required".
         # Every other limit, revocation and expiry check above still applies.
         if (
-            approved_fingerprint is not None
+            approval_granted
+            and approved_fingerprint is not None
             and result.decision == PolicyDecisionType.REQUIRE_APPROVAL
         ):
             return result.model_copy(

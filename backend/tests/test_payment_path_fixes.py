@@ -43,3 +43,37 @@ async def test_approved_proposal_above_auto_limit_can_be_paid():
         assert execute.status_code == 200
         session = execute.json()["session"]
         assert session["state"] == "PAID", session["failure_reason"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "drift", [{"simulate_drift_type": "price_drift"}, {"simulate_drift_type": "sku_substitution"}]
+)
+async def test_auto_authorized_checkout_rejects_drift(drift):
+    async with _client() as client:
+        checkout_id = await _new_checkout(client, AUTO_PROMPT)
+        state = (await client.get(f"/api/checkouts/{checkout_id}")).json()["state"]
+        assert state == "AUTHORIZED"
+
+        execute = await client.post(f"/api/checkouts/{checkout_id}/execute", json=drift)
+        session = execute.json()["session"]
+        assert session["state"] == "POLICY_REJECTED"
+        assert session["paypal_order_id"] is None
+
+
+def test_fingerprint_alone_does_not_count_as_user_approval():
+    from app.agent.shopper_agent import ShopperAgent
+    from app.models.schemas import PolicyDecisionType
+    from app.policy.engine import DeterministicPolicyEngine
+
+    policy = ShopperAgent.parse_intent_to_policy(APPROVAL_PROMPT, user_id="u")
+    proposal = ShopperAgent.generate_proposal(
+        user_prompt="Keychron K2 wireless mechanical keyboard", policy=policy
+    )["proposal"]
+    from app.fingerprint.canonical import compute_proposal_fingerprint
+
+    fp = compute_proposal_fingerprint(proposal)
+    result = DeterministicPolicyEngine.revalidate_pre_execution(
+        proposal, policy, approved_fingerprint=fp
+    )
+    assert result.decision == PolicyDecisionType.REQUIRE_APPROVAL

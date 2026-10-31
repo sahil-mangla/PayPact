@@ -128,6 +128,9 @@ class TransactionCoordinator:
             policy_version=policy.version,
             proposal=proposal,
             state=state,
+            # An auto-authorized checkout is bound to the exact proposal the policy allowed,
+            # so later drift is caught the same way as on a user-approved one.
+            approved_fingerprint=fp if state == TransactionState.AUTHORIZED else None,
             failure_reason=eval_result.primary_reason
             if state == TransactionState.POLICY_REJECTED
             else None,
@@ -234,6 +237,7 @@ class TransactionCoordinator:
                 proposal=live_proposal,
                 policy=policy,
                 approved_fingerprint=session.approved_fingerprint,
+                approval_granted=session.approval_record is not None,
             )
 
             if reval.decision != PolicyDecisionType.ALLOW:
@@ -354,6 +358,7 @@ class TransactionCoordinator:
                 proposal=live_proposal,
                 policy=policy,
                 approved_fingerprint=session.approved_fingerprint,
+                approval_granted=session.approval_record is not None,
             )
 
             if reval.decision != PolicyDecisionType.ALLOW:
