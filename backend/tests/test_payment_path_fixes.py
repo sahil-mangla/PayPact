@@ -850,3 +850,27 @@ async def test_a_webhook_whose_processing_failed_is_applied_when_paypal_redelive
         "PAYMENT.CAPTURE.REFUNDED", resource, event_id="WH-FLAKY"
     )
     assert policy.spent_total == round(before - 100.0, 2)
+
+
+@pytest.mark.asyncio
+async def test_a_dollar_budget_is_not_applied_to_prices_listed_in_rupees():
+    prompt = "Find a mechanical keyboard, budget $6000, auto up to $5000"
+    async with _client() as client:
+        intent = (
+            await client.post("/api/authorizations/parse-intent", json={"prompt": prompt})
+        ).json()
+        policy = (await client.post("/api/authorizations", json=intent)).json()
+        resp = await client.post(
+            "/api/proposals", json={"prompt": prompt, "policy_id": policy["policy_id"]}
+        )
+        # Catalogue prices are in INR: pairing them with a USD budget would mislabel the charge.
+        assert resp.status_code == 400
+        assert "INR" in resp.json()["detail"] and "USD" in resp.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_proposals_carry_the_currency_the_product_is_priced_in():
+    async with _client() as client:
+        checkout_id = await _new_checkout(client, AUTO_PROMPT)
+        proposal = (await client.get(f"/api/checkouts/{checkout_id}")).json()["proposal"]
+        assert proposal["currency"] == "INR"

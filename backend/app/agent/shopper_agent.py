@@ -409,6 +409,19 @@ class ShopperAgent:
                     cls._no_match_message(requirements, ranked)
                 )
 
+        # Catalogue prices are in the product's own currency, and the policy limits are in the
+        # currency the user stated. Comparing across the two would mislabel the charge, so
+        # refuse and say why instead of guessing a conversion.
+        budget_currency = (
+            policy.allowed_currencies[0] if policy.allowed_currencies else "INR"
+        ).upper()
+        if target_product.currency.upper() != budget_currency:
+            raise NoMatchingProductError(
+                f"'{target_product.name}' is priced in {target_product.currency.upper()}, but "
+                f"your budget is in {budget_currency}. State your budget in "
+                f"{target_product.currency.upper()} so the limits apply to the real price."
+            )
+
         # Build LineItem
         line_item = LineItem(
             sku=target_product.sku,
@@ -433,9 +446,7 @@ class ShopperAgent:
             shipping_fee=shipping_fee,
             tax_fee=tax_fee,
             total_amount=total_amount,
-            currency=policy.allowed_currencies[0]
-            if policy.allowed_currencies
-            else "INR",
+            currency=target_product.currency.upper(),
         )
 
         # Attach computed canonical fingerprint
