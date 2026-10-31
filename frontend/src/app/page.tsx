@@ -705,7 +705,7 @@ export default function Home() {
                   key={tab.id}
                   onClick={() => {
                     setActiveTab(tab.id as any);
-                    if (tab.id === 'lab' && !benchmarkReport) handleRunBenchmark();
+                    if (tab.id === 'lab') handleRunBenchmark();
                     if (tab.id === 'audit') fetchAuditEvents();
                   }}
                   className={`pill-tab-btn ${isActive ? 'active' : ''}`}
@@ -1819,36 +1819,32 @@ export default function Home() {
                 </div>
               </div>
 
-              {/* Benchmark Summary Metrics */}
+              {/* Benchmark Summary Metrics: only ever real results, never placeholder numbers */}
               {(() => {
-                const currentMetrics = benchmarkReport?.summary_by_system?.[selectedSystem] || {
-                  pass_rate_pct: selectedSystem === 'PROPOSED_APIL' ? 100.0 : selectedSystem === 'BASELINE_B' ? 57.1 : 14.3,
-                  total_scenarios: 7,
-                  unauthorized_spend_count: selectedSystem === 'PROPOSED_APIL' ? 0 : selectedSystem === 'BASELINE_B' ? 3 : 6,
-                  avg_latency_ms: selectedSystem === 'PROPOSED_APIL' ? 0.08 : selectedSystem === 'BASELINE_B' ? 0.09 : 0.10,
-                };
+                const summary = benchmarkReport?.summary_by_system?.[selectedSystem];
+                const none = '—';
                 return (
                   <div className="cols2-sm" style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '10px' }}>
                     {[
                       {
                         label: 'Policy Pass Rate',
-                        value: `${(currentMetrics.pass_rate_pct ?? 100).toFixed(1)}%`,
-                        color: (currentMetrics.pass_rate_pct ?? 100) === 100 ? '#047857' : '#b45309',
+                        value: summary ? `${Number(summary.pass_rate_pct).toFixed(1)}%` : none,
+                        color: !summary ? '#526077' : summary.pass_rate_pct === 100 ? '#047857' : '#b45309',
                       },
                       {
                         label: 'Total Test Scenarios',
-                        value: currentMetrics.total_scenarios ?? 7,
-                        color: '#0070ba',
+                        value: summary ? summary.total_scenarios : none,
+                        color: summary ? '#0070ba' : '#526077',
                       },
                       {
                         label: 'Unauthorized Spends',
-                        value: currentMetrics.unauthorized_spend_count ?? 0,
-                        color: (currentMetrics.unauthorized_spend_count ?? 0) === 0 ? '#047857' : '#b91c1c',
+                        value: summary ? summary.unauthorized_spend_count : none,
+                        color: !summary ? '#526077' : summary.unauthorized_spend_count === 0 ? '#047857' : '#b91c1c',
                       },
                       {
                         label: 'Average Evaluation Speed',
-                        value: `${(currentMetrics.avg_latency_ms ?? 0.08).toFixed(2)} ms`,
-                        color: '#6366f1',
+                        value: summary ? `${Number(summary.avg_latency_ms).toFixed(2)} ms` : none,
+                        color: summary ? '#6366f1' : '#526077',
                       },
                     ].map(({ label, value, color }) => (
                       <div key={label} className="clean-card" style={{ padding: '10px 14px', textAlign: 'center' }}>
@@ -1967,18 +1963,25 @@ export default function Home() {
                     </thead>
                     <tbody>
                       {[
-                        { sys: 'Baseline A (No Policy Gate)', pass: '14.3%', unauth: '6', lat: '0.10 ms', receipts: 'None', highlight: false },
-                        { sys: 'Baseline B (Static Limits Only)', pass: '57.1%', unauth: '3', lat: '0.09 ms', receipts: 'Unsigned logs', highlight: false },
-                        { sys: 'PayPact (Our Solution)', pass: '100.0%', unauth: '0', lat: '0.08 ms', receipts: 'Cryptographically Signed', highlight: true },
-                      ].map(({ sys, pass, unauth, lat, receipts, highlight }) => (
+                        { key: 'BASELINE_A', sys: 'Baseline A (No Policy Gate)', receipts: 'None', highlight: false },
+                        { key: 'BASELINE_B', sys: 'Baseline B (Static Limits Only)', receipts: 'Unsigned logs', highlight: false },
+                        { key: 'PROPOSED_APIL', sys: 'PayPact', receipts: 'HMAC-signed receipts', highlight: true },
+                      ].map(({ key, sys, receipts, highlight }) => {
+                        // Figures come from the last real run; until one succeeds they stay blank.
+                        const row = benchmarkReport?.summary_by_system?.[key];
+                        const pass = row ? `${Number(row.pass_rate_pct).toFixed(1)}%` : '—';
+                        const unauth = row ? String(row.unauthorized_spend_count) : '—';
+                        const lat = row ? `${Number(row.avg_latency_ms).toFixed(2)} ms` : '—';
+                        return (
                         <tr key={sys} style={{ borderBottom: '1px solid #f1f5f9', background: highlight ? '#eff6ff' : 'transparent' }}>
                           <td style={{ padding: '7px 12px', fontWeight: highlight ? 700 : 500, color: highlight ? '#0070ba' : '#0f172a' }}>{sys}</td>
-                          <td style={{ padding: '7px 12px', color: pass === '100.0%' ? '#047857' : '#b45309', fontWeight: 700 }}>{pass}</td>
-                          <td style={{ padding: '7px 12px', color: unauth === '0' ? '#047857' : '#b91c1c', fontWeight: 700 }}>{unauth}</td>
+                          <td style={{ padding: '7px 12px', color: !row ? '#526077' : row.pass_rate_pct === 100 ? '#047857' : '#b45309', fontWeight: 700 }}>{pass}</td>
+                          <td style={{ padding: '7px 12px', color: !row ? '#526077' : unauth === '0' ? '#047857' : '#b91c1c', fontWeight: 700 }}>{unauth}</td>
                           <td style={{ padding: '7px 12px', color: '#526077', fontFamily: 'monospace' }}>{lat}</td>
                           <td style={{ padding: '7px 12px', color: highlight ? '#0070ba' : '#526077', fontWeight: highlight ? 600 : 400 }}>{receipts}</td>
                         </tr>
-                      ))}
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>
