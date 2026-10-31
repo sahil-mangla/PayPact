@@ -40,6 +40,7 @@ import {
 import { WordByWordText } from '../components/WordByWordText';
 import ParticleMorphOrb, { AiThinkingOrb } from '../components/ui/ParticleMorphOrb';
 import { apiFetch, assertPaid, errorMessage, getApiBaseUrl } from '../lib/api';
+import { decisionBadge, decisionSummary } from '../lib/decision';
 
 const PAYPAL_CLIENT_ID = process.env.NEXT_PUBLIC_PAYPAL_CLIENT_ID || '';
 
@@ -557,7 +558,7 @@ export default function Home() {
       });
       if (!res.ok) throw new Error(await errorMessage(res, 'Approval failed.'));
       const updated = await res.json();
-      setProposalRes((prev: any) => ({ ...prev, state: updated.state }));
+      setProposalRes((prev: any) => ({ ...prev, state: updated.state, approvedByUser: true }));
     } catch (err: any) {
       setErrorMsg(err.message);
     } finally {
@@ -1558,12 +1559,44 @@ export default function Home() {
                             Matched to your request: “{proposalPrompt}”
                           </p>
                         )}
+                        {(() => {
+                          const note = decisionSummary({
+                            state: checkoutSession?.state === 'POLICY_REJECTED' ? 'POLICY_REJECTED' : proposalRes.state,
+                            approvedByUser: proposalRes.approvedByUser,
+                            total: proposalRes.proposal?.total_amount ?? 0,
+                            currency: proposalRes.proposal?.currency ?? 'INR',
+                            autoLimit: policy?.automatic_purchase_limit,
+                            ceiling: policy?.maximum_total,
+                            failureReason: checkoutSession?.failure_reason || proposalRes.failure_reason,
+                          });
+                          if (!note) return null;
+                          const color = { ok: '#047857', approved: '#047857', wait: '#b45309', blocked: '#b91c1c' }[note.tone];
+                          return (
+                            <p data-testid="decision-note" style={{ fontSize: '0.78rem', fontWeight: 600, color, marginTop: '6px' }}>
+                              {note.text}
+                            </p>
+                          );
+                        })()}
                       </div>
                       <div>
-                        {proposalRes.state === 'AUTHORIZED' && <span className="badge badge-allow" style={{ fontSize: '0.75rem', padding: '2px 7px' }}><CheckCircle2 size={12} /> Auto-Approved</span>}
-                        {proposalRes.state === 'AWAITING_APPROVAL' && <span className="badge badge-approval" style={{ fontSize: '0.75rem', padding: '2px 7px' }}><AlertTriangle size={12} /> Needs Approval</span>}
-                        {proposalRes.state === 'POLICY_REJECTED' && <span className="badge badge-reject" style={{ fontSize: '0.75rem', padding: '2px 7px' }}><ShieldX size={12} /> Blocked</span>}
-                        {(checkoutSession?.state === 'POLICY_REJECTED') && proposalRes.state !== 'POLICY_REJECTED' && <span className="badge badge-reject" style={{ fontSize: '0.75rem', padding: '2px 7px' }}><ShieldX size={12} /> Blocked</span>}
+                        {(() => {
+                          const label = decisionBadge({
+                            proposalState: proposalRes.state,
+                            sessionState: checkoutSession?.state,
+                            approvedByUser: proposalRes.approvedByUser,
+                          });
+                          if (!label) return null;
+                          const blocked = label === 'Blocked';
+                          const waiting = label === 'Needs Approval';
+                          return (
+                            <span
+                              className={blocked ? 'badge badge-reject' : waiting ? 'badge badge-approval' : 'badge badge-allow'}
+                              style={{ fontSize: '0.75rem', padding: '2px 7px', whiteSpace: 'nowrap' }}
+                            >
+                              {blocked ? <ShieldX size={12} /> : waiting ? <AlertTriangle size={12} /> : <CheckCircle2 size={12} />} {label}
+                            </span>
+                          );
+                        })()}
                       </div>
                     </div>
 

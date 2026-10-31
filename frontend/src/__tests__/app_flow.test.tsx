@@ -267,3 +267,23 @@ describe('After payment: refunds, disputes and the quota panel', () => {
     });
   });
 });
+
+describe('Decision explanation on the proposal card', () => {
+  it('explains an automatic approval in plain words with a single status badge', async () => {
+    localStorage.clear();
+    global.fetch = vi.fn().mockImplementation((url: string, options?: any) => {
+      const json = (b: any) => Promise.resolve({ ok: true, json: () => Promise.resolve(b) });
+      if (url.includes('/health')) return json({ status: 'healthy', paypal_mode: 'mock', ollama: {} });
+      if (url.includes('/authorizations')) return json(MOCK_POLICY);
+      if (url.includes('/proposals')) return json(MOCK_PROPOSAL_RES);
+      return json([]);
+    }) as any;
+    render(<Home />);
+    fireEvent.click(screen.getByText('Generate Proposal & Check Rules'));
+
+    const note = await screen.findByTestId('decision-note');
+    expect(note.textContent).toMatch(/within your .* auto-buy limit/);
+    expect(screen.getAllByText('Auto-Approved')).toHaveLength(1);
+    expect(screen.queryByText('Blocked')).not.toBeInTheDocument();
+  });
+});
