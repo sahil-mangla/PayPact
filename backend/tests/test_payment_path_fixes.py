@@ -822,3 +822,31 @@ async def test_budget_ceiling_breach_demo_prompt_is_refused_by_the_policy():
         # Paying a rejected checkout is refused, so PayPal is never reached.
         execute = await client.post(f"/api/checkouts/{proposal['checkout_id']}/execute", json={})
         assert execute.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_a_webhook_whose_processing_failed_is_applied_when_paypal_redelivers(monkeypatch):
+    coordinator, paid = await _paid_checkout()
+    policy = coordinator.get_policy(paid.policy_id)
+    before = policy.spent_total
+    resource = _refund(100.0, paid.paypal_capture_id)
+
+    real_apply = coordinator._apply_refund
+    calls = {"n": 0}
+
+    def flaky(*args, **kwargs):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("transient failure")
+        return real_apply(*args, **kwargs)
+
+    monkeypatch.setattr(coordinator, "_apply_refund", flaky)
+    with pytest.raises(RuntimeError):
+        await coordinator.process_webhook_event(
+            "PAYMENT.CAPTURE.REFUNDED", resource, event_id="WH-FLAKY"
+        )
+    # PayPal retries after a non-2xx answer; the retry must not be dropped as a duplicate.
+    await coordinator.process_webhook_event(
+        "PAYMENT.CAPTURE.REFUNDED", resource, event_id="WH-FLAKY"
+    )
+    assert policy.spent_total == round(before - 100.0, 2)

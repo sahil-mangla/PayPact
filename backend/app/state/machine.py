@@ -778,15 +778,13 @@ class TransactionCoordinator:
         session = self._sessions[target_checkout_id]
         policy = self._policies.get(session.policy_id)
 
-        # PayPal redelivers webhooks, and anyone can replay a captured one: apply each event once.
-        if event_id:
-            if event_id in self._seen_webhook_events:
-                return session
-            self._seen_webhook_events[event_id] = None
-            if len(self._seen_webhook_events) > 10_000:
-                self._seen_webhook_events.pop(next(iter(self._seen_webhook_events)))
-
         async with self._get_execution_lock(target_checkout_id):
+            # PayPal redelivers webhooks, and anyone can replay a captured one: apply each
+            # event once. The id is recorded only after it was applied, so a delivery that
+            # failed halfway is still processed when PayPal retries it.
+            if event_id and event_id in self._seen_webhook_events:
+                return session
+
             if event_type in ("PAYMENT.CAPTURE.REFUNDED", "PAYMENT.SALE.REFUNDED"):
                 self._apply_refund(session, policy, resource, summary)
             elif event_type in (
@@ -802,6 +800,11 @@ class TransactionCoordinator:
                         reason=summary
                         or f"Payment disputed via PayPal webhook: {event_type}",
                     )
+
+            if event_id:
+                self._seen_webhook_events[event_id] = None
+                if len(self._seen_webhook_events) > 10_000:
+                    self._seen_webhook_events.pop(next(iter(self._seen_webhook_events)))
         return session
 
     def _apply_refund(
