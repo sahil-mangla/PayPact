@@ -23,6 +23,29 @@ class PayPalOrderResponse(BaseModel):
     links: List[Dict[str, str]] = Field(default_factory=list)
     raw_response: Dict[str, Any] = Field(default_factory=dict)
     is_mock: bool = False
+    amount_reported: bool = True
+
+
+# PayPal REST currencies this client will send. INR is not one of them: the sandbox demo
+# converts it to USD at a fixed rate (override with INR_TO_USD_RATE). Any other currency is
+# refused rather than charged 1:1 under a different name.
+SUPPORTED_CURRENCIES = {"USD", "EUR", "GBP", "CAD", "AUD", "SGD", "JPY", "CHF", "NZD", "HKD"}
+ZERO_DECIMAL_CURRENCIES = {"JPY"}
+
+
+class PayPalCharge(BaseModel):
+    """What PayPal will actually be asked to charge for a proposal."""
+
+    currency: str
+    items: List[Dict[str, Any]]
+    item_total_value: str
+    shipping_value: str
+    tax_value: str
+    total_value: str
+
+    @property
+    def total(self) -> float:
+        return float(self.total_value)
 
 
 class PayPalClient:
@@ -98,6 +121,60 @@ class PayPalClient:
         self._token_expires_at = now + expires_in
         return self._access_token
 
+    def charge_for(self, proposal: PurchaseProposal) -> PayPalCharge:
+        """Work out the exact PayPal charge (currency, line items, totals) for a proposal."""
+        currency = proposal.currency.upper()
+        rate = 1.0
+        if currency == "INR":
+            currency = "USD"
+            rate = 1.0 / float(os.getenv("INR_TO_USD_RATE", "83"))
+        elif currency not in SUPPORTED_CURRENCIES:
+            raise ValueError(
+                f"Currency '{proposal.currency}' is not supported by PayPal checkout."
+            )
+
+        digits = 0 if currency in ZERO_DECIMAL_CURRENCIES else 2
+
+        def fmt(value: float) -> str:
+            return f"{value:.{digits}f}"
+
+        items_payload = []
+        item_total_sum = 0.0
+        for item in proposal.items:
+            unit_val = round(item.unit_price * rate, digits)
+            item_total_sum += round(unit_val * item.quantity, digits)
+            items_payload.append(
+                {
+                    "name": (item.name.strip() or "Item")[:127],
+                    "sku": (item.sku.strip() or "SKU")[:127],
+                    "quantity": str(item.quantity),
+                    "unit_amount": {
+                        "currency_code": currency,
+                        "value": fmt(unit_val),
+                    },
+                }
+            )
+
+        item_total_sum = round(item_total_sum, digits)
+        shipping_val = round(proposal.shipping_fee * rate, digits)
+        tax_val = round(proposal.tax_fee * rate, digits)
+        total_val = round(item_total_sum + shipping_val + tax_val, digits)
+        return PayPalCharge(
+            currency=currency,
+            items=items_payload,
+            item_total_value=fmt(item_total_sum),
+            shipping_value=fmt(shipping_val),
+            tax_value=fmt(tax_val),
+            total_value=fmt(total_val),
+        )
+
+    def expected_charge(self, proposal: PurchaseProposal) -> tuple[str, float]:
+        """Currency and amount a successful capture of this proposal must report."""
+        if self.mock_mode:
+            return proposal.currency, proposal.total_amount
+        charge = self.charge_for(proposal)
+        return charge.currency, charge.total
+
     async def create_order(
         self,
         proposal: PurchaseProposal,
@@ -145,51 +222,7 @@ class PayPalClient:
             "PayPal-Request-Id": req_id,
         }
 
-        # PayPal REST API supported currencies: USD, EUR, GBP, CAD, AUD, etc.
-        # INR is not supported by PayPal REST Orders API. For INR or unsupported currencies,
-        # convert to USD so PayPal Orders API accepts the order and matches frontend PayPal JS SDK.
-        paypal_currency = proposal.currency
-        conv_rate = 1.0
-        supported_currencies = {
-            "USD",
-            "EUR",
-            "GBP",
-            "CAD",
-            "AUD",
-            "SGD",
-            "JPY",
-            "CHF",
-            "NZD",
-            "HKD",
-        }
-        if paypal_currency not in supported_currencies:
-            paypal_currency = "USD"
-            conv_rate = 1.0 / 83.0 if proposal.currency == "INR" else 1.0
-
-        # Build PayPal v2 Order Payload with strict breakdown arithmetic
-        items_payload = []
-        item_total_sum = 0.0
-        for item in proposal.items:
-            unit_val = round(item.unit_price * conv_rate, 2)
-            item_total_sum += round(unit_val * item.quantity, 2)
-            clean_name = (item.name.strip() or "Item")[:127]
-            clean_sku = (item.sku.strip() or "SKU")[:127]
-            items_payload.append(
-                {
-                    "name": clean_name,
-                    "sku": clean_sku,
-                    "quantity": str(item.quantity),
-                    "unit_amount": {
-                        "currency_code": paypal_currency,
-                        "value": f"{unit_val:.2f}",
-                    },
-                }
-            )
-
-        item_total_sum = round(item_total_sum, 2)
-        shipping_val = round(proposal.shipping_fee * conv_rate, 2)
-        tax_val = round(proposal.tax_fee * conv_rate, 2)
-        total_val = round(item_total_sum + shipping_val + tax_val, 2)
+        charge = self.charge_for(proposal)
 
         payload = {
             "intent": "CAPTURE",
@@ -199,24 +232,24 @@ class PayPalClient:
                     "description": f"Purchase proposal {proposal.proposal_id}",
                     "custom_id": proposal.proposal_fingerprint or "",
                     "amount": {
-                        "currency_code": paypal_currency,
-                        "value": f"{total_val:.2f}",
+                        "currency_code": charge.currency,
+                        "value": charge.total_value,
                         "breakdown": {
                             "item_total": {
-                                "currency_code": paypal_currency,
-                                "value": f"{item_total_sum:.2f}",
+                                "currency_code": charge.currency,
+                                "value": charge.item_total_value,
                             },
                             "shipping": {
-                                "currency_code": paypal_currency,
-                                "value": f"{shipping_val:.2f}",
+                                "currency_code": charge.currency,
+                                "value": charge.shipping_value,
                             },
                             "tax_total": {
-                                "currency_code": paypal_currency,
-                                "value": f"{tax_val:.2f}",
+                                "currency_code": charge.currency,
+                                "value": charge.tax_value,
                             },
                         },
                     },
-                    "items": items_payload,
+                    "items": charge.items,
                 }
             ],
             "application_context": {
@@ -322,12 +355,22 @@ class PayPalClient:
             if captures:
                 capture_id = captures[0].get("id")
 
+        # A capture response reports what was captured under payments.captures[]; the order
+        # amount on the purchase unit is only a fallback.
         amount_val = 0.0
         currency_val = "USD"
-        if purchase_units and "amount" in purchase_units[0]:
-            amt = purchase_units[0]["amount"]
-            amount_val = float(amt.get("value", 0.0))
+        amount_reported = False
+        amt = None
+        if purchase_units:
+            captures = purchase_units[0].get("payments", {}).get("captures", [])
+            if captures and captures[0].get("amount"):
+                amt = captures[0]["amount"]
+            elif purchase_units[0].get("amount"):
+                amt = purchase_units[0]["amount"]
+        if amt and amt.get("value") is not None:
+            amount_val = float(amt["value"])
             currency_val = amt.get("currency_code", "USD")
+            amount_reported = True
 
         return PayPalOrderResponse(
             order_id=data["id"],
@@ -340,6 +383,7 @@ class PayPalClient:
             links=data.get("links", []),
             raw_response=data,
             is_mock=False,
+            amount_reported=amount_reported,
         )
 
     async def verify_webhook_signature(

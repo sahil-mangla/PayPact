@@ -582,6 +582,26 @@ class TransactionCoordinator:
                     )
                 )
                 if capture_resp.status == "COMPLETED":
+                    expected_currency, expected_amount = (
+                        self.paypal_client.expected_charge(session.proposal)
+                    )
+                    if capture_resp.amount_reported and (
+                        capture_resp.currency != expected_currency
+                        or abs(capture_resp.total_amount - expected_amount) > 0.005
+                    ):
+                        # The money moved but not as approved: never record it as a clean payment.
+                        session.state = TransactionState.FAILED
+                        session.paypal_capture_id = capture_resp.capture_id
+                        session.failure_reason = (
+                            f"Captured {capture_resp.total_amount} {capture_resp.currency} "
+                            f"does not match the approved {expected_amount} {expected_currency}."
+                        )
+                        self.audit_ledger.record_event(
+                            event_type="PAYMENT_AMOUNT_MISMATCH",
+                            checkout_id=checkout_id,
+                            reason=session.failure_reason,
+                        )
+                        return session
                     session.state = TransactionState.PAID
                     session.paypal_capture_id = capture_resp.capture_id
                     self._record_spend(

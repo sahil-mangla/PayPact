@@ -452,3 +452,163 @@ async def test_pending_checkouts_count_against_the_budget():
     assert second.state.value == "POLICY_REJECTED"
     assert "pending" in second.failure_reason.lower()
     assert second.paypal_order_id is None
+
+
+def _proposal(currency="INR", unit_price=3899.0, shipping=0.0, tax=0.0):
+    from app.models.schemas import LineItem, PurchaseProposal
+
+    return PurchaseProposal(
+        proposal_id="prop_t",
+        policy_id="pol_t",
+        policy_version=1,
+        merchant="Keychron",
+        items=[LineItem(sku="KB", name="Keyboard", quantity=1, unit_price=unit_price)],
+        item_subtotal=unit_price,
+        shipping_fee=shipping,
+        tax_fee=tax,
+        total_amount=round(unit_price + shipping + tax, 2),
+        currency=currency,
+    )
+
+
+def test_unsupported_currencies_are_refused_instead_of_charged_one_to_one():
+    from app.payments.paypal_client import PayPalClient
+
+    client = PayPalClient(mock_mode=False, client_id="x", client_secret="y")
+    with pytest.raises(ValueError, match="BRL"):
+        client.charge_for(_proposal(currency="BRL"))
+
+
+def test_zero_decimal_currency_is_sent_without_fractional_digits():
+    from app.payments.paypal_client import PayPalClient
+
+    client = PayPalClient(mock_mode=False, client_id="x", client_secret="y")
+    charge = client.charge_for(_proposal(currency="JPY", unit_price=1500.0))
+    assert charge.currency == "JPY"
+    assert charge.total_value == "1500"
+    assert charge.items[0]["unit_amount"]["value"] == "1500"
+
+
+def test_inr_is_converted_to_usd_for_the_sandbox():
+    from app.payments.paypal_client import PayPalClient
+
+    client = PayPalClient(mock_mode=False, client_id="x", client_secret="y")
+    charge = client.charge_for(_proposal(currency="INR", unit_price=8300.0))
+    assert charge.currency == "USD"
+    assert charge.total_value == "100.00"
+
+
+@pytest.mark.asyncio
+async def test_capture_that_does_not_match_the_approved_amount_is_not_marked_paid(monkeypatch):
+    from app.payments.paypal_client import PayPalOrderResponse
+
+    coordinator, session = await _checkout_with_order(AUTO_PROMPT)
+
+    async def wrong_amount_capture(order_id, request_id=None):
+        return PayPalOrderResponse(
+            order_id=order_id,
+            status="COMPLETED",
+            intent="CAPTURE",
+            capture_id="CAP-X",
+            total_amount=session.proposal.total_amount + 500,
+            currency=session.proposal.currency,
+            is_mock=True,
+        )
+
+    monkeypatch.setattr(coordinator.paypal_client, "capture_order", wrong_amount_capture)
+    result = await coordinator.capture_approved_order(
+        session.checkout_id, session.paypal_order_id
+    )
+    assert result.state.value == "FAILED"
+    assert "does not match" in result.failure_reason
+    assert coordinator.get_policy(session.policy_id).spent_total == 0
+    events = coordinator.audit_ledger.get_events(checkout_id=session.checkout_id)
+    assert any(e.event_type == "PAYMENT_AMOUNT_MISMATCH" for e in events)
+
+
+def _live_client_with_transport(monkeypatch, handler):
+    """A non-mock PayPalClient whose HTTP calls are answered by `handler`."""
+    import httpx
+
+    from app.payments import paypal_client as module
+
+    real_async_client = httpx.AsyncClient
+
+    def factory(*args, **kwargs):
+        kwargs["transport"] = httpx.MockTransport(handler)
+        return real_async_client(*args, **kwargs)
+
+    monkeypatch.setattr(module.httpx, "AsyncClient", factory)
+    client = module.PayPalClient(
+        client_id="id", client_secret="secret", base_url="https://paypal.test", mock_mode=False
+    )
+    client._access_token = "tok"
+    client._token_expires_at = 10**12
+    return client
+
+
+@pytest.mark.asyncio
+async def test_live_create_order_sends_idempotency_key_and_exact_totals(monkeypatch):
+    import httpx
+    import json
+
+    seen = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["url"] = str(request.url)
+        seen["request_id"] = request.headers.get("PayPal-Request-Id")
+        seen["body"] = json.loads(request.content)
+        return httpx.Response(201, json={"id": "ORD123", "status": "CREATED", "links": []})
+
+    client = _live_client_with_transport(monkeypatch, handler)
+    proposal = _proposal(currency="USD", unit_price=40.0, shipping=5.5, tax=2.25)
+    order = await client.create_order(proposal, request_id="req-1")
+
+    assert order.order_id == "ORD123"
+    assert seen["url"] == "https://paypal.test/v2/checkout/orders"
+    assert seen["request_id"] == "req-1"
+    unit = seen["body"]["purchase_units"][0]
+    assert unit["amount"]["value"] == "47.75"
+    assert unit["amount"]["breakdown"]["shipping"]["value"] == "5.50"
+
+
+@pytest.mark.asyncio
+async def test_live_capture_reads_the_amount_from_the_capture_not_the_purchase_unit(monkeypatch):
+    import httpx
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/v2/checkout/orders/ORD123/capture"
+        return httpx.Response(
+            201,
+            json={
+                "id": "ORD123",
+                "status": "COMPLETED",
+                "purchase_units": [
+                    {
+                        "payments": {
+                            "captures": [
+                                {"id": "CAP9", "amount": {"currency_code": "USD", "value": "47.75"}}
+                            ]
+                        }
+                    }
+                ],
+            },
+        )
+
+    client = _live_client_with_transport(monkeypatch, handler)
+    resp = await client.capture_order("ORD123", request_id="req-1_cap")
+    assert resp.capture_id == "CAP9"
+    assert resp.total_amount == 47.75
+    assert resp.currency == "USD"
+
+
+@pytest.mark.asyncio
+async def test_live_capture_without_a_reported_amount_is_not_treated_as_a_mismatch(monkeypatch):
+    import httpx
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(201, json={"id": "ORD123", "status": "COMPLETED"})
+
+    client = _live_client_with_transport(monkeypatch, handler)
+    resp = await client.capture_order("ORD123")
+    assert resp.amount_reported is False
