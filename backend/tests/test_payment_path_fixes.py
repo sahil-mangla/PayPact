@@ -193,3 +193,43 @@ async def test_capture_after_payment_is_idempotent():
     )
     assert second.state.value == "PAID"
     assert coordinator.get_policy(session.policy_id).spent_total == spent
+
+
+@pytest.mark.asyncio
+async def test_reconcile_does_not_double_count_spend_on_a_paid_checkout():
+    coordinator, session = await _checkout_with_order(AUTO_PROMPT)
+    await coordinator.capture_approved_order(
+        session.checkout_id, session.paypal_order_id
+    )
+    spent = coordinator.get_policy(session.policy_id).spent_total
+    assert spent > 0
+
+    for _ in range(3):
+        result = await coordinator.reconcile_timeout(session.checkout_id)
+        assert result.state.value == "PAID"
+    assert coordinator.get_policy(session.policy_id).spent_total == spent
+
+
+@pytest.mark.asyncio
+async def test_reconcile_refuses_checkouts_that_are_not_awaiting_reconciliation():
+    coordinator, session = await _checkout_with_order(AUTO_PROMPT)
+    with pytest.raises(ValueError):
+        await coordinator.reconcile_timeout(session.checkout_id)
+    assert coordinator.get_session(session.checkout_id).state.value == "CHECKOUT_CREATED"
+
+
+@pytest.mark.asyncio
+async def test_reconcile_aborts_cleanly_when_no_order_was_ever_created():
+    from app.api.routers import coordinator
+
+    async with _client() as client:
+        checkout_id = await _new_checkout(client, AUTO_PROMPT)
+    timed_out = await coordinator.create_paypal_order_only(
+        checkout_id, simulate_timeout=True
+    )
+    assert timed_out.state.value == "RECONCILIATION_REQUIRED"
+    assert timed_out.paypal_order_id is None
+
+    result = await coordinator.reconcile_timeout(checkout_id)
+    assert result.state.value == "FAILED"
+    assert coordinator.get_policy(result.policy_id).spent_total == 0

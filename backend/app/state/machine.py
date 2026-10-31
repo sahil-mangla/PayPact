@@ -517,37 +517,61 @@ class TransactionCoordinator:
     async def reconcile_timeout(self, checkout_id: str) -> CheckoutSession:
         """Reconcile ambiguous timeout with PayPal."""
         session = self._sessions.get(checkout_id)
-        if not session or not session.paypal_order_id:
+        if not session:
             raise ValueError(f"Cannot reconcile checkout '{checkout_id}'.")
 
-        details = await self.paypal_client.get_order_details(session.paypal_order_id)
-        session.reconciliation_data = details.raw_response
+        async with self._get_execution_lock(checkout_id):
+            # Already settled: reconciling again must never touch the budget a second time.
+            if session.state == TransactionState.PAID:
+                return session
 
-        if details.status == "COMPLETED":
-            session.state = TransactionState.PAID
-            session.paypal_capture_id = details.capture_id
-            self._record_spend(
-                policy_id=session.policy_id,
-                amount=session.proposal.total_amount,
-                agent_id=session.proposal.agent_id,
-            )
-            self.audit_ledger.record_event(
-                event_type="RECONCILIATION_SUCCESS",
-                checkout_id=checkout_id,
-                reason="Order reconciled as COMPLETED via PayPal lookup.",
-            )
-        else:
-            session.state = TransactionState.FAILED
-            session.failure_reason = (
-                f"Order reconciled as non-captured ({details.status})."
-            )
-            self.audit_ledger.record_event(
-                event_type="RECONCILIATION_ABORT",
-                checkout_id=checkout_id,
-                reason=f"Order reconciled as {details.status}. Safe to abort without duplicate charge.",
-            )
+            if session.state != TransactionState.RECONCILIATION_REQUIRED:
+                raise ValueError(
+                    f"Cannot reconcile checkout in state '{session.state}'. "
+                    "Must be RECONCILIATION_REQUIRED."
+                )
 
-        return session
+            if not session.paypal_order_id:
+                # The timeout hit before PayPal returned an order, so nothing can have been charged.
+                session.state = TransactionState.FAILED
+                session.failure_reason = "No PayPal order was created before the timeout."
+                self.audit_ledger.record_event(
+                    event_type="RECONCILIATION_ABORT",
+                    checkout_id=checkout_id,
+                    reason="No PayPal order exists for this checkout. Safe to abort without charge.",
+                )
+                return session
+
+            details = await self.paypal_client.get_order_details(
+                session.paypal_order_id
+            )
+            session.reconciliation_data = details.raw_response
+
+            if details.status == "COMPLETED":
+                session.state = TransactionState.PAID
+                session.paypal_capture_id = details.capture_id
+                self._record_spend(
+                    policy_id=session.policy_id,
+                    amount=session.proposal.total_amount,
+                    agent_id=session.proposal.agent_id,
+                )
+                self.audit_ledger.record_event(
+                    event_type="RECONCILIATION_SUCCESS",
+                    checkout_id=checkout_id,
+                    reason="Order reconciled as COMPLETED via PayPal lookup.",
+                )
+            else:
+                session.state = TransactionState.FAILED
+                session.failure_reason = (
+                    f"Order reconciled as non-captured ({details.status})."
+                )
+                self.audit_ledger.record_event(
+                    event_type="RECONCILIATION_ABORT",
+                    checkout_id=checkout_id,
+                    reason=f"Order reconciled as {details.status}. Safe to abort without duplicate charge.",
+                )
+
+            return session
 
     def get_session(self, checkout_id: str) -> Optional[CheckoutSession]:
         return self._sessions.get(checkout_id)
