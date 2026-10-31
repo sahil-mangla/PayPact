@@ -48,7 +48,7 @@ class SimulateWebhookRequest(BaseModel):
         default="PAYMENT.CAPTURE.REFUNDED",
         description="PayPal event type (e.g. PAYMENT.CAPTURE.REFUNDED, CUSTOMER.DISPUTE.CREATED)",
     )
-    amount: Optional[float] = None
+    amount: Optional[float] = Field(None, gt=0)
     reason: Optional[str] = None
 
 
@@ -408,7 +408,18 @@ async def handle_paypal_webhook(request: Request):
 
 @router.post("/webhooks/simulate")
 async def simulate_paypal_webhook(req: SimulateWebhookRequest):
-    """Interactive webhook simulation for local demos and Integrity Lab."""
+    """Interactive webhook simulation for local demos and Integrity Lab.
+
+    It fabricates PayPal events, so it only runs in mock mode unless explicitly enabled.
+    """
+    if not (
+        coordinator.paypal_client.mock_mode
+        or os.getenv("ENABLE_WEBHOOK_SIMULATION", "").lower() in ("true", "1", "yes")
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail="Webhook simulation is disabled against live PayPal (set ENABLE_WEBHOOK_SIMULATION=true for a demo).",
+        )
     session = coordinator.get_session(req.checkout_id)
     if not session:
         raise HTTPException(
