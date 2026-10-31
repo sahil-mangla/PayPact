@@ -1,7 +1,12 @@
 # System Design & Architecture Specification
 ## Agent Payment Integrity Layer (APIL) & Integrity Lab
 
-> **Status:** APPROVED FOR IMPLEMENTATION PLANNING  
+> **Status:** Original design specification (written Oct 19, 2026). Sections 1 to 7 describe the
+> intended behaviour and still hold. **Section 8 describes the system as built**; where this
+> document and the code differ, the code and the README win. Known differences from the plan:
+> state is held **in memory** (there is no database, so sessions and the audit ledger reset on
+> restart), all routes live in `backend/app/api/routers.py`, and the AI layer is Gemini, then
+> local Ollama, then a deterministic parser (not a multi-provider abstraction).  
 > **Project Working Title:** Agent Payment Integrity Lab (APIL)  
 > **Target:** PayPal AI Hackathon 2026 — *Build What's Next with PayPal and AI*  
 > **Date:** October 19, 2026
@@ -81,7 +86,7 @@ sequenceDiagram
     participant API as FastAPI Backend
     participant Agent as LLM Agent Core
     participant Gate as Deterministic Policy Gate
-    participant DB as SQLite & Audit Ledger
+    participant DB as In-memory store & Audit Ledger
     participant PayPal as PayPal Sandbox API
 
     User->>WebUI: "Find a wireless mechanical keyboard under ₹5,000, auto-buy under ₹4,000"
@@ -236,66 +241,57 @@ The application will feature a unified, modern web interface with two primary vi
 1. **Scenario Runner:** Grid of the 7 test scenarios with 1-click execution.
 2. **Side-by-Side System Comparison:** Toggle between Baseline A, Baseline B, and Proposed APIL to visually witness how naive agents fail and how APIL protects the transaction.
 3. **Trace Inspector & Fingerprint Diff:** Visual diff viewer showing exactly what drifted (e.g. green original vs red drifted price) and why the gate fired.
-4. **Exportable Evaluation Metrics:** Live statistics table showing Unauthorized Spend Rate (0% on APIL vs 60%+ on baselines), False Block Rate, and Latency overhead (<15ms).
+4. **Exportable Evaluation Metrics:** Live statistics table showing Unauthorized Spend Rate (0% on APIL vs 60%+ on baselines), False Block Rate, and Latency overhead (measured against the offline mock PayPal client, so it reflects the gate itself, not network time).
 
 ---
 
-## 8. Technology Stack & Directory Structure
+## 8. Technology Stack & Directory Structure (as built)
 
-- **Backend:** FastAPI (Python 3.11+), Pydantic v2 (strict validation), SQLite + SQLAlchemy (async), HTTPX (PayPal REST API calls), pytest.
-- **Frontend:** Next.js (App Router, TypeScript), Vanilla CSS design tokens with sleek dark mode, glassmorphism accents, Lucide icons.
-- **Payment Gateway:** PayPal Orders API v2 (Sandbox Mode) with `PayPal-Request-Id` idempotency.
-- **AI Core:** Lightweight tool-calling abstraction supporting OpenAI / Anthropic / Gemini API with a deterministic Mock Provider for zero-dependency test runs.
+- **Backend:** FastAPI (Python 3.11+), Pydantic v2, HTTPX for the PayPal REST calls, pytest. All state (policies, checkouts, the audit ledger) is in memory.
+- **Frontend:** Next.js 14 (App Router, TypeScript), inline styles plus a small global stylesheet, Lucide icons, `@paypal/react-paypal-js` for the PayPal buttons, Vitest and Testing Library.
+- **Payment Gateway:** PayPal Orders API v2 (sandbox) with `PayPal-Request-Id` idempotency, order lookup for timeout reconciliation, and webhook verification through `verify-webhook-signature`. Without credentials the client runs in an offline mock mode.
+- **AI Core:** Gemini (`gemini-2.5-flash`) when `GEMINI_API_KEY` is set, otherwise a local Ollama model, otherwise a deterministic parser. The model parses intent and writes the rationale; product selection and every payment decision are deterministic.
 
 ### Repository Layout
 ```text
 paypal-hack/
-├── .gitignore
 ├── README.md
+├── LICENSE / THIRD_PARTY_NOTICES.md
+├── render.yaml
 ├── docs/
 │   ├── BENCHMARK_RESULTS.json
 │   └── SYSTEM_DESIGN.md
 ├── backend/
-│   ├── pyproject.toml / requirements.txt
+│   ├── requirements.txt / requirements-dev.txt / pyproject.toml
 │   ├── app/
 │   │   ├── main.py
-│   │   ├── api/             # HTTP Route handlers
-│   │   │   ├── authorizations.py
-│   │   │   ├── proposals.py
-│   │   │   ├── checkouts.py
-│   │   │   ├── lab.py
-│   │   │   └── webhooks.py
-│   │   ├── core/            # Config, security, database
-│   │   ├── agent/           # LLM parser & recommendation engine
-│   │   ├── catalogue/       # Fixtures: products, edge-case descriptions
-│   │   ├── policy/          # Deterministic Policy Engine & checks
-│   │   ├── fingerprint/     # Canonical SHA-256 fingerprinting
-│   │   ├── state/           # State Machine & transition guards
-│   │   ├── payments/        # PayPal Sandbox client & idempotency
+│   │   ├── config.py
+│   │   ├── api/             # routers.py (all routes), ratelimit.py
+│   │   ├── agent/           # shopper_agent, requirements matcher, Gemini and Ollama clients
+│   │   ├── catalogue/       # Fixture products, including an adversarial listing
+│   │   ├── policy/          # Deterministic policy engine and pre-execution gate
+│   │   ├── fingerprint/     # Canonical SHA-256 proposal fingerprinting
+│   │   ├── state/           # Transaction coordinator and state machine
+│   │   ├── payments/        # PayPal client (Orders v2, webhook verification, mock mode)
 │   │   ├── audit/           # Hash-chained append-only event ledger
-│   │   └── lab/             # Scenario definitions (A to G) & baselines
-│   └── tests/
-│       ├── test_policy.py
-│       ├── test_fingerprint.py
-│       ├── test_lifecycle_drift.py
-│       ├── test_idempotency.py
-│       └── test_scenarios.py
+│   │   ├── crypto/          # HMAC-SHA256 signed receipts
+│   │   ├── models/          # Pydantic schemas
+│   │   └── lab/             # Scenario definitions (A to G) and baselines
+│   └── tests/               # policy, fingerprint, state, webhooks, API, agent, benchmark
 ├── frontend/
 │   ├── package.json
-│   ├── src/
-│   │   ├── app/
-│   │   │   ├── page.tsx     # Purchase Agent UI
-│   │   │   ├── lab/         # Integrity Lab UI
-│   │   │   └── layout.tsx
-│   │   ├── components/
-│   │   └── styles/          # Modern Vanilla CSS design system
+│   └── src/
+│       ├── app/             # page.tsx (all three tabs), layout.tsx
+│       ├── components/      # WordByWordText, particle orb
+│       ├── lib/api.ts       # backend URL resolution, fetch wrapper, error helpers
+│       └── __tests__/
 └── scripts/
-    └── run_eval.py          # CLI runner for benchmark evaluation
+    └── run_eval.py          # CLI runner for the benchmark
 ```
 
 ---
 
-## 9. Implementation Execution Plan
+## 9. Original Implementation Plan (historical)
 
 The development is split into discrete, test-driven milestones:
 
