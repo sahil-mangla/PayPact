@@ -151,3 +151,27 @@ describe('Dashboard Tab Switching & Integrity Lab', () => {
     expect(textarea.value).toContain('brass keyboard desk mat');
   });
 });
+
+describe('Integrity Lab failures are shown, not swallowed', () => {
+  it('shows the server reason when the benchmark run fails', async () => {
+    localStorage.clear();
+    global.fetch = vi.fn().mockImplementation((url: string) => {
+      if (url.includes('/lab/run')) {
+        return Promise.resolve({
+          ok: false,
+          status: 500,
+          json: () => Promise.resolve({ detail: 'Benchmark engine unavailable' }),
+        });
+      }
+      if (url.includes('/health')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ status: 'healthy', paypal_mode: 'mock', ollama: {} }) });
+      }
+      return Promise.resolve({ ok: true, json: () => Promise.resolve([]) });
+    }) as any;
+
+    render(<Home />);
+    fireEvent.click(screen.getByText('Policy Test Lab'));
+
+    expect(await screen.findByText(/Benchmark engine unavailable/i)).toBeInTheDocument();
+  });
+});

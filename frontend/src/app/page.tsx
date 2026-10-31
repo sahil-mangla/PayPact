@@ -604,11 +604,14 @@ export default function Home() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ system_type: selectedSystem }),
       });
+      if (!res.ok) throw new Error(await errorMessage(res, 'The benchmark run failed.'));
       const data = await res.json();
       setBenchmarkReport(data.benchmark_report);
-      localStorage.setItem('apil_benchmark', JSON.stringify(data.benchmark_report));
+      try {
+        localStorage.setItem('apil_benchmark', JSON.stringify(data.benchmark_report));
+      } catch (_) {}
     } catch (err: any) {
-      console.error(err);
+      setErrorMsg(err.message || 'The benchmark run failed.');
     } finally {
       setLabRunning(false);
     }
@@ -622,6 +625,7 @@ export default function Home() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ scenario_id: scenarioId, system_type: selectedSystem }),
       });
+      if (!res.ok) throw new Error(await errorMessage(res, `Scenario ${scenarioId} failed to run.`));
       const data = await res.json();
       if (data.single_run) {
         setSingleScenarioResults((prev) => ({
@@ -630,7 +634,7 @@ export default function Home() {
         }));
       }
     } catch (err: any) {
-      console.error('Error running single scenario:', err);
+      setErrorMsg(err.message || `Scenario ${scenarioId} failed to run.`);
     } finally {
       setRunningScenarioId(null);
     }
