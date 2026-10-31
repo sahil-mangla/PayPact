@@ -940,6 +940,8 @@ export default function Home() {
           <AnimatePresence>
             {errorMsg && (
               <motion.div
+                role="alert"
+                aria-live="assertive"
                 initial={{ opacity: 0, y: -20, x: 20, scale: 0.95 }}
                 animate={{ opacity: 1, y: 0, x: 0, scale: 1 }}
                 exit={{ opacity: 0, y: -16, x: 16, scale: 0.95 }}
@@ -1095,13 +1097,18 @@ export default function Home() {
                     </div>
                   </div>
 
-                  <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, color: '#334155', marginBottom: '3px' }}>
+                  <label
+                    htmlFor="purchase-instructions"
+                    style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, color: '#334155', marginBottom: '3px' }}
+                  >
                     Purchase Instructions:
                   </label>
                   <textarea
+                    id="purchase-instructions"
                     value={prompt}
                     onChange={(e) => setPrompt(e.target.value)}
-                    rows={2}
+                    maxLength={500}
+                    rows={3}
                     style={{
                       width: '100%',
                       background: '#ffffff',

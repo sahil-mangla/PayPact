@@ -1,7 +1,7 @@
 'use client';
 
 import React from 'react';
-import { motion } from 'framer-motion';
+import { motion, useReducedMotion } from 'framer-motion';
 import { Sparkles } from 'lucide-react';
 
 export interface WordByWordTextProps {
@@ -21,6 +21,37 @@ export function WordByWordText({
   const providerTag = tagMatch ? tagMatch[2].trim().replace(/^\[|\]$/g, '') : null;
 
   const words = mainText.split(' ').filter(Boolean);
+  const reduceMotion = useReducedMotion();
+
+  if (reduceMotion) {
+    // Users who ask for less motion get the text and provider tag at once.
+    return (
+      <div className={className}>
+        <span>{words.join(' ')}</span>
+        {providerTag && (
+          <div style={{ marginTop: '5px' }}>
+            <span
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '4px',
+                fontSize: '0.75rem',
+                fontWeight: 600,
+                color: '#4338ca',
+                background: '#eef2ff',
+                border: '1px solid #c7d2fe',
+                padding: '1px 7px',
+                borderRadius: '10px',
+              }}
+            >
+              <Sparkles size={12} aria-hidden="true" />
+              {providerTag}
+            </span>
+          </div>
+        )}
+      </div>
+    );
+  }
 
   return (
     <div className={className}>

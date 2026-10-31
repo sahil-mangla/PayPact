@@ -194,8 +194,16 @@ export default function ParticleMorphOrb({
 
     const startTime = typeof performance !== 'undefined' ? performance.now() : Date.now();
 
+    // Reduced motion: draw one still frame instead of running an animation loop.
+    const prefersReducedMotion =
+      typeof window !== 'undefined' &&
+      typeof window.matchMedia === 'function' &&
+      window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
     const animate = () => {
-      animationFrameId = requestAnimationFrame(animate);
+      if (!prefersReducedMotion) {
+        animationFrameId = requestAnimationFrame(animate);
+      }
       const now = typeof performance !== 'undefined' ? performance.now() : Date.now();
       const elapsedTime = ((now - startTime) / 1000) * speed;
 
