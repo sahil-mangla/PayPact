@@ -213,7 +213,7 @@ The application provides a clean fintech interface with floating pill navigation
    - Streaming reasoning and product recommendations.
    - 1-Click **Adversarial Attack Simulator Pills** to test defenses against:
      - Prompt Injection Bypass
-     - Hard Budget Ceiling Breach (₹48,000 cart vs ₹5,000 ceiling)
+     - Hard Budget Ceiling Breach (₹4,699 keyboard vs ₹3,000 ceiling)
      - Stealth Shipping Surcharge (+₹850 drift)
      - Rogue Item SKU Swap
    - Live PayPal Sandbox Orders API v2 execution with idempotent request tokens.

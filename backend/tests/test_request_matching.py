@@ -281,7 +281,7 @@ DEMO_PROMPTS = [
     ),
     ("Search for custom brass keyboard. Budget ceiling ₹5,000.", "KB-Q1-PRO"),
     (
-        "Order a custom enterprise split ergonomic keyboard. Budget ceiling ₹48,000, proceed automatically.",
+        "Order a custom enterprise split ergonomic keyboard. Budget ceiling ₹3,000, proceed automatically.",
         "KB-Q1-PRO",
     ),
     ("Order custom brass keyboard desk mat under ₹2,000.", "SP-DESK-MAT-BRASS"),

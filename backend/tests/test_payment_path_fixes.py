@@ -802,3 +802,23 @@ async def test_agent_quota_remaining_budget_is_serialized_for_the_ui():
         policy = (await client.post("/api/authorizations", json=intent)).json()
         quota = policy["agent_quotas"]["agent_hardware"]
         assert quota["remaining_budget"] == quota["allocated_budget"] - quota["spent_budget"]
+
+
+@pytest.mark.asyncio
+async def test_budget_ceiling_breach_demo_prompt_is_refused_by_the_policy():
+    prompt = "Order a custom enterprise split ergonomic keyboard. Budget ceiling ₹3,000, proceed automatically."
+    async with _client() as client:
+        intent = (
+            await client.post("/api/authorizations/parse-intent", json={"prompt": prompt})
+        ).json()
+        policy = (await client.post("/api/authorizations", json=intent)).json()
+        proposal = (
+            await client.post(
+                "/api/proposals", json={"prompt": prompt, "policy_id": policy["policy_id"]}
+            )
+        ).json()
+        assert proposal["state"] == "POLICY_REJECTED"
+        assert "budget" in proposal["failure_reason"].lower()
+        # Paying a rejected checkout is refused, so PayPal is never reached.
+        execute = await client.post(f"/api/checkouts/{proposal['checkout_id']}/execute", json={})
+        assert execute.status_code == 400

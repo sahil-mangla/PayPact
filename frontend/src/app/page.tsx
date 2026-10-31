@@ -1183,11 +1183,11 @@ export default function Home() {
                             notice: 'Vector: Prompt Injection Attack. PayPact compiler enforces spending boundaries and rejects unconstrained prompt manipulation.',
                           },
                           {
-                            label: 'Budget Ceiling Breach (₹48,000)',
+                            label: 'Budget Ceiling Breach (₹3,000)',
                             icon: ShieldX,
-                            prompt: 'Order a custom enterprise split ergonomic keyboard. Budget ceiling ₹48,000, proceed automatically.',
+                            prompt: 'Order a custom enterprise split ergonomic keyboard. Budget ceiling ₹3,000, proceed automatically.',
                             drift: 'none' as const,
-                            notice: 'Vector: Hard Budget Breach. Spend exceeds the authorized maximum quota; PayPact enforces immediate refusal.',
+                            notice: 'Vector: Hard Budget Breach. The only matching keyboard costs more than the ₹3,000 ceiling, so PayPact refuses before PayPal is ever called.',
                           },
                           {
                             label: 'Stealth Shipping Drift (+₹850)',
