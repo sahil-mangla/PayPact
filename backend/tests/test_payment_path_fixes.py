@@ -540,7 +540,7 @@ def _live_client_with_transport(monkeypatch, handler):
 
     monkeypatch.setattr(module.httpx, "AsyncClient", factory)
     client = module.PayPalClient(
-        client_id="id", client_secret="secret", base_url="https://paypal.test", mock_mode=False
+        client_id="id", client_secret="secret", base_url="https://sandbox.paypal.test", mock_mode=False
     )
     client._access_token = "tok"
     client._token_expires_at = 10**12
@@ -565,7 +565,7 @@ async def test_live_create_order_sends_idempotency_key_and_exact_totals(monkeypa
     order = await client.create_order(proposal, request_id="req-1")
 
     assert order.order_id == "ORD123"
-    assert seen["url"] == "https://paypal.test/v2/checkout/orders"
+    assert seen["url"] == "https://sandbox.paypal.test/v2/checkout/orders"
     assert seen["request_id"] == "req-1"
     unit = seen["body"]["purchase_units"][0]
     assert unit["amount"]["value"] == "47.75"
@@ -772,3 +772,20 @@ def test_gemini_daily_call_cap_falls_back_instead_of_calling(monkeypatch):
     for _ in range(4):
         GeminiClient.parse_intent("keyboard under 5000")
     assert len(sent) == 2
+
+
+def test_client_refuses_to_run_against_live_paypal_by_accident(monkeypatch):
+    from app.payments.paypal_client import PayPalClient
+
+    monkeypatch.delenv("ALLOW_LIVE_PAYPAL", raising=False)
+    with pytest.raises(ValueError, match="sandbox"):
+        PayPalClient(
+            client_id="a", client_secret="b", base_url="https://api-m.paypal.com", mock_mode=False
+        )
+    # Sandbox and mock are fine, and live needs an explicit opt-in.
+    PayPalClient(client_id="a", client_secret="b", base_url="https://api-m.sandbox.paypal.com")
+    PayPalClient(base_url="https://api-m.paypal.com", mock_mode=True)
+    monkeypatch.setenv("ALLOW_LIVE_PAYPAL", "true")
+    PayPalClient(
+        client_id="a", client_secret="b", base_url="https://api-m.paypal.com", mock_mode=False
+    )

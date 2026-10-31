@@ -79,6 +79,17 @@ class PayPalClient:
             else (env_mock or not (self.client_id and self.client_secret))
         )
 
+        # This project is a sandbox integration: refuse to move real money by accident.
+        if (
+            not self.mock_mode
+            and "sandbox" not in self.base_url
+            and os.getenv("ALLOW_LIVE_PAYPAL", "").lower() not in ("true", "1", "yes")
+        ):
+            raise ValueError(
+                f"PAYPAL_BASE_URL '{self.base_url}' is not a sandbox endpoint. "
+                "Set ALLOW_LIVE_PAYPAL=true only if you really intend to charge real accounts."
+            )
+
         # Where PayPal sends the buyer back after approval (the JS SDK flow uses callbacks)
         self.frontend_url = os.getenv("FRONTEND_URL", "http://localhost:3000").rstrip(
             "/"
