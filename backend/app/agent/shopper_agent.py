@@ -345,12 +345,11 @@ class ShopperAgent:
                 for c in ranked
                 if not unmet_requirements(requirements, cls._facts(c))
                 # No recognisable product type: the prompt must at least name something
-                # the item is about, or "buy me a yacht" would get a keyboard
+                # the item is about, or "buy me a yacht" would get a keyboard. Descriptions
+                # are merchant-written free text, so they never count as a match.
                 and (
                     requirements.kinds
-                    or shares_topic(
-                        user_prompt, f"{c.name} {c.description} {c.category} {c.kind}"
-                    )
+                    or shares_topic(user_prompt, f"{c.name} {c.category} {c.kind}")
                 )
             ]
 
