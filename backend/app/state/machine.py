@@ -95,7 +95,13 @@ class TransactionCoordinator:
                 or other.policy_id != session.policy_id
                 or other.state not in _PENDING_STATES
                 or other.pending_since is None
-                or now - other.pending_since > PENDING_RESERVATION_TTL
+            ):
+                continue
+            # An abandoned popup stops holding budget after a while. A payment whose outcome
+            # is unknown may already have moved money, so it holds its budget until settled.
+            if (
+                other.state != TransactionState.RECONCILIATION_REQUIRED
+                and now - other.pending_since > PENDING_RESERVATION_TTL
             ):
                 continue
             pending_total += other.proposal.total_amount
@@ -517,6 +523,75 @@ class TransactionCoordinator:
 
             return session
 
+    def _settle_capture(
+        self,
+        session: CheckoutSession,
+        resp: PayPalOrderResponse,
+        *,
+        success_event: str,
+        success_reason: str,
+    ) -> CheckoutSession:
+        """Turn what PayPal reports about an order into a checkout state.
+
+        Capture and reconcile share this, so neither can record a payment the other would
+        refuse: the order and the capture inside it must both be COMPLETED, and the amount and
+        currency must be what was approved.
+        """
+        checkout_id = session.checkout_id
+        if resp.status != "COMPLETED":
+            session.state = TransactionState.FAILED
+            session.failure_reason = f"PayPal returned status: {resp.status}"
+            return session
+
+        if resp.capture_status and resp.capture_status != "COMPLETED":
+            session.paypal_capture_id = resp.capture_id
+            if resp.capture_status == "PENDING":
+                # PayPal is still holding the funds; it may settle or be reversed later.
+                session.state = TransactionState.RECONCILIATION_REQUIRED
+                session.failure_reason = "PayPal capture is PENDING; reconcile to check again."
+            else:
+                session.state = TransactionState.FAILED
+                session.failure_reason = (
+                    f"PayPal capture was {resp.capture_status}; no payment was taken."
+                )
+            return session
+
+        expected_currency, expected_amount = self.paypal_client.expected_charge(
+            session.proposal
+        )
+        if resp.amount_reported and (
+            resp.currency != expected_currency
+            or abs(resp.total_amount - expected_amount) > 0.005
+        ):
+            # The money moved but not as approved: never record it as a clean payment.
+            session.state = TransactionState.FAILED
+            session.paypal_capture_id = resp.capture_id
+            session.failure_reason = (
+                f"Captured {resp.total_amount} {resp.currency} "
+                f"does not match the approved {expected_amount} {expected_currency}. "
+                f"Capture {resp.capture_id} needs manual review in PayPal."
+            )
+            self.audit_ledger.record_event(
+                event_type="PAYMENT_AMOUNT_MISMATCH",
+                checkout_id=checkout_id,
+                reason=session.failure_reason,
+            )
+            return session
+
+        session.state = TransactionState.PAID
+        session.paypal_capture_id = resp.capture_id
+        self._record_spend(
+            policy_id=session.policy_id,
+            amount=session.proposal.total_amount,
+            agent_id=session.proposal.agent_id,
+        )
+        self.audit_ledger.record_event(
+            event_type=success_event,
+            checkout_id=checkout_id,
+            reason=success_reason,
+        )
+        return session
+
     async def capture_approved_order(
         self,
         checkout_id: str,
@@ -585,44 +660,12 @@ class TransactionCoordinator:
                         request_id=f"{session.idempotency_key}_cap",
                     )
                 )
-                if capture_resp.status == "COMPLETED":
-                    expected_currency, expected_amount = (
-                        self.paypal_client.expected_charge(session.proposal)
-                    )
-                    if capture_resp.amount_reported and (
-                        capture_resp.currency != expected_currency
-                        or abs(capture_resp.total_amount - expected_amount) > 0.005
-                    ):
-                        # The money moved but not as approved: never record it as a clean payment.
-                        session.state = TransactionState.FAILED
-                        session.paypal_capture_id = capture_resp.capture_id
-                        session.failure_reason = (
-                            f"Captured {capture_resp.total_amount} {capture_resp.currency} "
-                            f"does not match the approved {expected_amount} {expected_currency}."
-                        )
-                        self.audit_ledger.record_event(
-                            event_type="PAYMENT_AMOUNT_MISMATCH",
-                            checkout_id=checkout_id,
-                            reason=session.failure_reason,
-                        )
-                        return session
-                    session.state = TransactionState.PAID
-                    session.paypal_capture_id = capture_resp.capture_id
-                    self._record_spend(
-                        policy_id=session.policy_id,
-                        amount=session.proposal.total_amount,
-                        agent_id=session.proposal.agent_id,
-                    )
-                    self.audit_ledger.record_event(
-                        event_type="PAYMENT_COMPLETED",
-                        checkout_id=checkout_id,
-                        reason=f"Live sandbox capture successful. Capture ID: {capture_resp.capture_id}",
-                    )
-                else:
-                    session.state = TransactionState.FAILED
-                    session.failure_reason = (
-                        f"PayPal returned unexpected status: {capture_resp.status}"
-                    )
+                return self._settle_capture(
+                    session,
+                    capture_resp,
+                    success_event="PAYMENT_COMPLETED",
+                    success_reason=f"Live sandbox capture successful. Capture ID: {capture_resp.capture_id}",
+                )
             except Exception as e:
                 session.state = TransactionState.RECONCILIATION_REQUIRED
                 session.failure_reason = f"PayPal capture error: {str(e)}"
@@ -663,28 +706,22 @@ class TransactionCoordinator:
             session.reconciliation_data = details.raw_response
 
             if details.status == "COMPLETED":
-                session.state = TransactionState.PAID
-                session.paypal_capture_id = details.capture_id
-                self._record_spend(
-                    policy_id=session.policy_id,
-                    amount=session.proposal.total_amount,
-                    agent_id=session.proposal.agent_id,
+                return self._settle_capture(
+                    session,
+                    details,
+                    success_event="RECONCILIATION_SUCCESS",
+                    success_reason="Order reconciled as COMPLETED via PayPal lookup.",
                 )
-                self.audit_ledger.record_event(
-                    event_type="RECONCILIATION_SUCCESS",
-                    checkout_id=checkout_id,
-                    reason="Order reconciled as COMPLETED via PayPal lookup.",
-                )
-            else:
-                session.state = TransactionState.FAILED
-                session.failure_reason = (
-                    f"Order reconciled as non-captured ({details.status})."
-                )
-                self.audit_ledger.record_event(
-                    event_type="RECONCILIATION_ABORT",
-                    checkout_id=checkout_id,
-                    reason=f"Order reconciled as {details.status}. Safe to abort without duplicate charge.",
-                )
+
+            session.state = TransactionState.FAILED
+            session.failure_reason = (
+                f"Order reconciled as non-captured ({details.status})."
+            )
+            self.audit_ledger.record_event(
+                event_type="RECONCILIATION_ABORT",
+                checkout_id=checkout_id,
+                reason=f"Order reconciled as {details.status}. Safe to abort without duplicate charge.",
+            )
 
             return session
 

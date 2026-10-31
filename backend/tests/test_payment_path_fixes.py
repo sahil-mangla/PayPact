@@ -874,3 +874,129 @@ async def test_proposals_carry_the_currency_the_product_is_priced_in():
         checkout_id = await _new_checkout(client, AUTO_PROMPT)
         proposal = (await client.get(f"/api/checkouts/{checkout_id}")).json()["proposal"]
         assert proposal["currency"] == "INR"
+
+
+def _response(order_id, total, currency, capture_status="COMPLETED", status="COMPLETED"):
+    from app.payments.paypal_client import PayPalOrderResponse
+
+    return PayPalOrderResponse(
+        order_id=order_id,
+        status=status,
+        intent="CAPTURE",
+        capture_id="CAP-X",
+        capture_status=capture_status,
+        total_amount=total,
+        currency=currency,
+        is_mock=True,
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "capture_status,expected_state",
+    [("PENDING", "RECONCILIATION_REQUIRED"), ("DECLINED", "FAILED"), ("COMPLETED", "PAID")],
+)
+async def test_only_a_completed_capture_inside_a_completed_order_is_paid(
+    monkeypatch, capture_status, expected_state
+):
+    coordinator, session = await _checkout_with_order(AUTO_PROMPT)
+
+    async def capture(order_id, request_id=None):
+        return _response(
+            order_id, session.proposal.total_amount, session.proposal.currency, capture_status
+        )
+
+    monkeypatch.setattr(coordinator.paypal_client, "capture_order", capture)
+    result = await coordinator.capture_approved_order(session.checkout_id, session.paypal_order_id)
+    assert result.state.value == expected_state
+    spent = coordinator.get_policy(session.policy_id).spent_total
+    assert (spent > 0) == (expected_state == "PAID")
+
+
+async def _awaiting_reconciliation():
+    from app.api.routers import coordinator
+
+    async with _client() as client:
+        checkout_id = await _new_checkout(client, AUTO_PROMPT)
+    session = await coordinator.execute_payment(checkout_id, simulate_timeout=True)
+    assert session.state.value == "RECONCILIATION_REQUIRED" and session.paypal_order_id
+    return coordinator, session
+
+
+@pytest.mark.asyncio
+async def test_reconcile_applies_the_same_amount_check_as_capture(monkeypatch):
+    coordinator, session = await _awaiting_reconciliation()
+
+    async def lookup(order_id):
+        return _response(order_id, 1.00, session.proposal.currency)
+
+    monkeypatch.setattr(coordinator.paypal_client, "get_order_details", lookup)
+    result = await coordinator.reconcile_timeout(session.checkout_id)
+    assert result.state.value == "FAILED"
+    assert "does not match" in result.failure_reason
+    assert coordinator.get_policy(session.policy_id).spent_total == 0
+
+
+@pytest.mark.asyncio
+async def test_reconcile_of_a_pending_capture_keeps_waiting(monkeypatch):
+    coordinator, session = await _awaiting_reconciliation()
+
+    async def lookup(order_id):
+        return _response(
+            order_id, session.proposal.total_amount, session.proposal.currency, "PENDING"
+        )
+
+    monkeypatch.setattr(coordinator.paypal_client, "get_order_details", lookup)
+    result = await coordinator.reconcile_timeout(session.checkout_id)
+    assert result.state.value == "RECONCILIATION_REQUIRED"
+    assert coordinator.get_policy(session.policy_id).spent_total == 0
+
+
+@pytest.mark.asyncio
+async def test_an_unresolved_timeout_keeps_holding_its_budget_past_the_reservation_ttl():
+    from datetime import datetime, timedelta, timezone
+
+    coordinator, first = await _awaiting_reconciliation()
+    first.pending_since = datetime.now(timezone.utc) - timedelta(hours=2)
+
+    async with _client() as client:
+        second_id = None
+        # Another checkout under the SAME policy.
+        proposal = await client.post(
+            "/api/proposals",
+            json={
+                "prompt": "Keychron K2 wireless mechanical keyboard",
+                "policy_id": first.policy_id,
+            },
+        )
+        second_id = proposal.json()["checkout_id"]
+    second = await coordinator.execute_payment(second_id)
+    assert second.state.value == "POLICY_REJECTED"
+    assert "pending" in second.failure_reason.lower()
+
+
+@pytest.mark.asyncio
+async def test_capture_rechecks_the_budget_when_the_reservation_has_lapsed():
+    from datetime import datetime, timedelta, timezone
+
+    coordinator, first = await _checkout_with_order(AUTO_PROMPT)
+    first.pending_since = datetime.now(timezone.utc) - timedelta(hours=2)  # popup left open
+
+    async with _client() as client:
+        proposal = await client.post(
+            "/api/proposals",
+            json={
+                "prompt": "Keychron K2 wireless mechanical keyboard",
+                "policy_id": first.policy_id,
+            },
+        )
+        second_id = proposal.json()["checkout_id"]
+    second = await coordinator.create_paypal_order_only(second_id)
+    paid = await coordinator.capture_approved_order(second_id, second.paypal_order_id)
+    assert paid.state.value == "PAID"
+
+    # The first buyer finally approves: the budget no longer has room.
+    late = await coordinator.capture_approved_order(first.checkout_id, first.paypal_order_id)
+    assert late.state.value == "POLICY_REJECTED"
+    policy = coordinator.get_policy(first.policy_id)
+    assert policy.spent_total <= policy.maximum_total

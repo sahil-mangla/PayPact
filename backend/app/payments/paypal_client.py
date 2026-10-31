@@ -24,6 +24,8 @@ class PayPalOrderResponse(BaseModel):
     raw_response: Dict[str, Any] = Field(default_factory=dict)
     is_mock: bool = False
     amount_reported: bool = True
+    # Status of the capture inside a COMPLETED order (PENDING and DECLINED exist); None if unknown.
+    capture_status: Optional[str] = None
 
 
 # PayPal REST currencies this client will send. INR is not one of them: the sandbox demo
@@ -324,6 +326,7 @@ class PayPalClient:
                 intent="CAPTURE",
                 create_time=order.get("create_time"),
                 capture_id=capture_id,
+                capture_status="COMPLETED",
                 total_amount=order["amount"],
                 currency=order["currency"],
                 links=order.get("links", []),
@@ -360,11 +363,13 @@ class PayPalClient:
 
         # Extract capture id from purchase_units
         capture_id = None
+        capture_status = None
         purchase_units = data.get("purchase_units", [])
         if purchase_units:
             captures = purchase_units[0].get("payments", {}).get("captures", [])
             if captures:
                 capture_id = captures[0].get("id")
+                capture_status = captures[0].get("status")
 
         # A capture response reports what was captured under payments.captures[]; the order
         # amount on the purchase unit is only a fallback.
@@ -395,6 +400,7 @@ class PayPalClient:
             raw_response=data,
             is_mock=False,
             amount_reported=amount_reported,
+            capture_status=capture_status,
         )
 
     async def verify_webhook_signature(
@@ -458,6 +464,7 @@ class PayPalClient:
                 intent=order.get("intent", "CAPTURE"),
                 create_time=order.get("create_time"),
                 capture_id=order.get("capture_id"),
+                capture_status="COMPLETED" if order.get("capture_id") else None,
                 total_amount=order.get("amount", 0.0),
                 currency=order.get("currency", "USD"),
                 links=order.get("links", []),
@@ -480,18 +487,25 @@ class PayPalClient:
             data = resp.json()
 
         capture_id = None
+        capture_status = None
+        amount_val = 0.0
+        currency_val = "USD"
+        amount_reported = False
+        amt = None
         purchase_units = data.get("purchase_units", [])
         if purchase_units:
             captures = purchase_units[0].get("payments", {}).get("captures", [])
             if captures:
                 capture_id = captures[0].get("id")
-
-        amount_val = 0.0
-        currency_val = "USD"
-        if purchase_units and "amount" in purchase_units[0]:
-            amt = purchase_units[0]["amount"]
-            amount_val = float(amt.get("value", 0.0))
+                capture_status = captures[0].get("status")
+                if captures[0].get("amount"):
+                    amt = captures[0]["amount"]
+            if amt is None and purchase_units[0].get("amount"):
+                amt = purchase_units[0]["amount"]
+        if amt and amt.get("value") is not None:
+            amount_val = float(amt["value"])
             currency_val = amt.get("currency_code", "USD")
+            amount_reported = True
 
         return PayPalOrderResponse(
             order_id=data["id"],
@@ -504,4 +518,6 @@ class PayPalClient:
             links=data.get("links", []),
             raw_response=data,
             is_mock=False,
+            amount_reported=amount_reported,
+            capture_status=capture_status,
         )
