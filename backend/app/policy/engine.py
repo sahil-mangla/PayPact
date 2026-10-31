@@ -554,4 +554,18 @@ class DeterministicPolicyEngine:
                 )
 
         # Re-run full policy evaluation against current policy
-        return cls.evaluate(proposal=proposal, policy=policy, current_time=now)
+        result = cls.evaluate(proposal=proposal, policy=policy, current_time=now)
+
+        # The user's approval of this exact fingerprint is what resolves "approval required".
+        # Every other limit, revocation and expiry check above still applies.
+        if (
+            approved_fingerprint is not None
+            and result.decision == PolicyDecisionType.REQUIRE_APPROVAL
+        ):
+            return result.model_copy(
+                update={
+                    "decision": PolicyDecisionType.ALLOW,
+                    "primary_reason": "User approval matches the exact proposal fingerprint.",
+                }
+            )
+        return result

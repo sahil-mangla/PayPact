@@ -1,0 +1,45 @@
+"""Regression tests for payment-path defects found in the pre-submission review."""
+
+import pytest
+from httpx import ASGITransport, AsyncClient
+
+from app.main import app
+
+APPROVAL_PROMPT = "Find a mechanical keyboard under ₹5,000, auto-buy under ₹1,000"
+AUTO_PROMPT = "Find a mechanical keyboard under ₹5,000, auto-buy under ₹4,000"
+
+
+def _client() -> AsyncClient:
+    return AsyncClient(transport=ASGITransport(app=app), base_url="http://test")
+
+
+async def _new_checkout(client: AsyncClient, policy_prompt: str) -> str:
+    intent = await client.post(
+        "/api/authorizations/parse-intent", json={"prompt": policy_prompt}
+    )
+    policy = (await client.post("/api/authorizations", json=intent.json())).json()
+    proposal = await client.post(
+        "/api/proposals",
+        json={
+            "prompt": "Keychron K2 wireless mechanical keyboard",
+            "policy_id": policy["policy_id"],
+        },
+    )
+    assert proposal.status_code == 200
+    return proposal.json()["checkout_id"]
+
+
+@pytest.mark.asyncio
+async def test_approved_proposal_above_auto_limit_can_be_paid():
+    async with _client() as client:
+        checkout_id = await _new_checkout(client, APPROVAL_PROMPT)
+        state = (await client.get(f"/api/checkouts/{checkout_id}")).json()["state"]
+        assert state == "AWAITING_APPROVAL"
+
+        approve = await client.post(f"/api/checkouts/{checkout_id}/approve", json={})
+        assert approve.status_code == 200
+
+        execute = await client.post(f"/api/checkouts/{checkout_id}/execute", json={})
+        assert execute.status_code == 200
+        session = execute.json()["session"]
+        assert session["state"] == "PAID", session["failure_reason"]
