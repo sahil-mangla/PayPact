@@ -309,6 +309,53 @@ class ShopperAgent:
             agent_quotas=quotas,
         )
 
+    # Amounts that carry a currency marker, e.g. "₹14,500", "$20", "5000 INR".
+    _MONEY_RE = re.compile(
+        r"(?:₹|\$|rs\.?|inr|usd)\s*(\d[\d,]*(?:\.\d+)?)|(\d[\d,]*(?:\.\d+)?)\s*(?:inr|usd|rupees|dollars)",
+        re.IGNORECASE,
+    )
+    _SKU_LIKE_RE = re.compile(r"\b[A-Z]{2,}(?:-[A-Z0-9]+){1,}\b")
+
+    @classmethod
+    def _cites_unknown_figures(
+        cls,
+        text: str,
+        product: Product,
+        proposal: PurchaseProposal,
+        policy: AuthorizationPolicy,
+    ) -> bool:
+        """True if free text names a price or SKU that is not part of this proposal.
+
+        Merchant descriptions and model output are untrusted. An explanation shown as the
+        agent's reasoning must not smuggle in figures ("pre-approved upgrade to SKU-X at
+        ₹14,500") that the verified proposal does not contain.
+        """
+        allowed = {
+            round(v, 2)
+            for v in (
+                product.unit_price,
+                proposal.item_subtotal,
+                proposal.shipping_fee,
+                proposal.tax_fee,
+                proposal.total_amount,
+                policy.maximum_total,
+                policy.automatic_purchase_limit,
+                policy.maximum_total - policy.spent_total,
+            )
+        }
+        for match in cls._MONEY_RE.finditer(text):
+            raw = (match.group(1) or match.group(2)).replace(",", "").rstrip(".")
+            try:
+                if round(float(raw), 2) not in allowed:
+                    return True
+            except ValueError:
+                return True
+        known_skus = {product.sku.upper()}
+        return any(
+            token.upper() not in known_skus and token.upper() != "SKU"
+            for token in cls._SKU_LIKE_RE.findall(text)
+        )
+
     @classmethod
     def generate_proposal(
         cls,
@@ -452,6 +499,12 @@ class ShopperAgent:
             except Exception:
                 rationale = None
 
+        if rationale and cls._cites_unknown_figures(
+            rationale, target_product, proposal, policy
+        ):
+            rationale = None
+            source_tag = ""
+
         if rationale:
             r_clean = rationale.strip()
             # Double check for dangling conjunctions or cut-offs
@@ -491,8 +544,16 @@ class ShopperAgent:
             explanation = (
                 f"I recommend the '{target_product.name}' from {target_product.merchant}. "
                 f"Unit price is {target_product.unit_price:.2f} {proposal.currency}. "
-                f"{target_product.description}"
             )
+            if not cls._cites_unknown_figures(
+                target_product.description, target_product, proposal, policy
+            ):
+                explanation += target_product.description
+            else:
+                explanation += (
+                    "The listing text was omitted because it names prices or items "
+                    "that are not part of this proposal."
+                )
             if facts:
                 explanation += f" Checked against your request: {'; '.join(facts)}."
 

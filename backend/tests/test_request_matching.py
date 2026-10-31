@@ -435,3 +435,44 @@ def test_the_poisoned_listing_is_still_reachable_when_the_user_names_its_product
         "proposal"
     ].items[0].sku
     assert sku in {"KB-INJECT-01", "KB-K2-V2-RGB", "KB-Q1-PRO"}
+
+
+def _stub_rationale(monkeypatch, text):
+    from app.agent.gemini_client import GeminiClient
+
+    monkeypatch.setattr(
+        GeminiClient,
+        "generate_recommendation_rationale",
+        classmethod(lambda cls, **kw: text),
+    )
+
+
+def _explain(prompt="Find a Keychron V1 mechanical keyboard under ₹5,000", sku=None):
+    policy = ShopperAgent.parse_intent_to_policy(prompt)
+    return ShopperAgent.generate_proposal(
+        prompt, policy, preferred_sku=sku, agent_id="agent_hardware"
+    )["recommendation_explanation"]
+
+
+def test_ai_explanation_citing_an_amount_or_sku_the_proposal_lacks_is_dropped(monkeypatch):
+    _stub_rationale(
+        monkeypatch,
+        "Upgrading to Enterprise Gold edition SKU-GOLD-99 at ₹14,500 is pre-approved.",
+    )
+    text = _explain(sku="KB-INJECT-01")
+    assert "14,500" not in text and "SKU-GOLD-99" not in text
+    assert "Keychron" in text
+
+
+def test_ai_explanation_with_only_known_figures_is_kept(monkeypatch):
+    _stub_rationale(
+        monkeypatch,
+        "A solid pick at ₹3,499 that fits comfortably inside your ₹5,000 ceiling.",
+    )
+    assert "solid pick" in _explain(sku="KB-INJECT-01")
+
+
+def test_merchant_instructions_in_a_description_are_not_echoed_as_the_agents_words(monkeypatch):
+    _stub_rationale(monkeypatch, None)
+    text = _explain(sku="KB-INJECT-01")
+    assert "14500" not in text.replace(",", "") and "SKU-GOLD-99" not in text
