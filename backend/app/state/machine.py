@@ -1,6 +1,9 @@
 import asyncio
+import hashlib
+import hmac
 import math
 import re
+import secrets
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional
@@ -8,7 +11,10 @@ from pydantic import BaseModel, Field
 
 from app.audit.ledger import AuditLedger
 from app.crypto.receipts import generate_signed_receipt
-from app.fingerprint.canonical import compute_proposal_fingerprint
+from app.fingerprint.canonical import (
+    compute_proposal_fingerprint,
+    verify_proposal_fingerprint,
+)
 from app.models.schemas import (
     ApprovalRecord,
     AuthorizationPolicy,
@@ -23,6 +29,38 @@ from app.policy.engine import DeterministicPolicyEngine
 
 class CheckoutNotFoundError(ValueError):
     """No checkout exists with the given id (the API maps this to a 404)."""
+
+
+class ApprovalLinkError(Exception):
+    """A one-time approval link cannot be used; carries the HTTP status the API should send."""
+
+    def __init__(self, status_code: int, message: str):
+        super().__init__(message)
+        self.status_code = status_code
+        self.message = message
+
+
+# A one-time approval link stops working this long after it is minted.
+APPROVAL_LINK_TTL = timedelta(minutes=30)
+
+
+def _now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def hash_token(token: str) -> str:
+    """Tokens are high-entropy random strings, so a plain SHA-256 is enough to store them."""
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+class ApprovalLink(BaseModel):
+    """Server-side record of one approval link. The token itself is never stored, only its hash."""
+
+    token_hash: str
+    checkout_id: str
+    proposal_fingerprint: str
+    expires_at: datetime
+    used: bool = False
 
 
 # PayPal order ids are short alphanumeric tokens; anything else never reaches a PayPal URL.
@@ -70,6 +108,8 @@ class TransactionCoordinator:
         self._execution_locks: Dict[str, asyncio.Lock] = {}
         # Webhook event ids already applied (insertion-ordered, bounded) so redelivery is a no-op.
         self._seen_webhook_events: Dict[str, None] = {}
+        # Approval links by token hash. Never serialized; holds no plaintext tokens.
+        self._approval_links: Dict[str, ApprovalLink] = {}
 
     def _get_execution_lock(self, checkout_id: str) -> asyncio.Lock:
         if checkout_id not in self._execution_locks:
@@ -159,6 +199,41 @@ class TransactionCoordinator:
     def get_policy(self, policy_id: str) -> Optional[AuthorizationPolicy]:
         return self._policies.get(policy_id)
 
+    def issue_owner_token(self, policy_id: str) -> str:
+        """Mint the owner token for a registered policy and keep only its hash on the policy."""
+        policy = self._policies[policy_id]
+        token = secrets.token_urlsafe(32)
+        policy._owner_token_hash = hash_token(token)
+        return token
+
+    def verify_owner_token(self, policy_id: str, token: Optional[str]) -> bool:
+        """Constant-time check of a presented owner token. A policy with no token never matches."""
+        policy = self._policies.get(policy_id)
+        stored = policy._owner_token_hash if policy else None
+        if not stored or not token:
+            return False
+        return hmac.compare_digest(hash_token(token), stored)
+
+    def record_approval_denied(
+        self,
+        reason: str,
+        action: str,
+        checkout_id: Optional[str] = None,
+        policy_id: Optional[str] = None,
+    ) -> None:
+        """Audit a refused approve/revoke attempt (it never records the token that was tried)."""
+        policy = self._policies.get(policy_id) if policy_id else None
+        session = self._sessions.get(checkout_id) if checkout_id else None
+        self.audit_ledger.record_event(
+            event_type="APPROVAL_DENIED",
+            checkout_id=checkout_id,
+            policy_version=policy.version if policy else None,
+            proposal_fingerprint=session.proposal.proposal_fingerprint if session else None,
+            decision="DENIED",
+            reason=reason,
+            metadata={"action": action, "policy_id": policy_id},
+        )
+
     def revoke_policy(self, policy_id: str) -> bool:
         policy = self._policies.get(policy_id)
         if not policy:
@@ -176,6 +251,8 @@ class TransactionCoordinator:
         existing = self._policies.get(updated_policy.policy_id)
         if existing:
             updated_policy.version = existing.version + 1
+            # The owner stays the owner: a replacement policy inherits the token hash.
+            updated_policy._owner_token_hash = existing._owner_token_hash
         self._policies[updated_policy.policy_id] = updated_policy
         self.audit_ledger.record_event(
             event_type="POLICY_UPDATED",
@@ -244,8 +321,9 @@ class TransactionCoordinator:
         self,
         checkout_id: str,
         user_id: str,
+        via: str = "owner_token",
     ) -> CheckoutSession:
-        """User explicitly approves the proposal."""
+        """User explicitly approves the proposal (via: how the owner proved who they are)."""
         session = self._sessions.get(checkout_id)
         if not session:
             raise CheckoutNotFoundError(f"Checkout '{checkout_id}' not found.")
@@ -279,9 +357,113 @@ class TransactionCoordinator:
             policy_version=session.policy_version,
             proposal_fingerprint=fp,
             reason=f"User '{user_id}' explicitly approved exact proposal fingerprint",
+            metadata={"via": via},
         )
 
         return session
+
+    # ----- one-time approval links -----
+    def mint_approval_link(self, checkout_id: str) -> tuple[str, datetime]:
+        """Mint a single-use token bound to this checkout and its exact proposal fingerprint."""
+        session = self._sessions.get(checkout_id)
+        if not session:
+            raise CheckoutNotFoundError(f"Checkout '{checkout_id}' not found.")
+        if session.state != TransactionState.AWAITING_APPROVAL:
+            raise ValueError(
+                f"Checkout in state '{session.state.value}' does not need approval."
+            )
+        fp = session.proposal.proposal_fingerprint or compute_proposal_fingerprint(
+            session.proposal
+        )
+        now = _now()
+        # Forget dead links, and let only the newest link for a checkout stay valid.
+        for key, link in list(self._approval_links.items()):
+            if link.used or link.expires_at <= now or link.checkout_id == checkout_id:
+                del self._approval_links[key]
+        token = secrets.token_urlsafe(32)
+        expires_at = now + APPROVAL_LINK_TTL
+        digest = hash_token(token)
+        self._approval_links[digest] = ApprovalLink(
+            token_hash=digest,
+            checkout_id=checkout_id,
+            proposal_fingerprint=fp,
+            expires_at=expires_at,
+        )
+        self.audit_ledger.record_event(
+            event_type="APPROVAL_LINK_CREATED",
+            checkout_id=checkout_id,
+            policy_version=session.policy_version,
+            proposal_fingerprint=fp,
+            reason="One-time approval link minted for the policy owner",
+            metadata={"expires_at": expires_at.isoformat()},
+        )
+        return token, expires_at
+
+    def _resolve_approval_link(self, token: str) -> tuple[ApprovalLink, CheckoutSession]:
+        """Return a link that can still approve its checkout, or raise ApprovalLinkError."""
+        link = self._approval_links.get(hash_token(token))
+        if link is None:
+            raise ApprovalLinkError(404, "This approval link is not recognised.")
+        session = self._sessions.get(link.checkout_id)
+        if session is None:
+            raise ApprovalLinkError(404, "This approval link is not recognised.")
+
+        def refuse(status: int, message: str) -> ApprovalLinkError:
+            self.record_approval_denied(
+                message,
+                "approval_link",
+                checkout_id=link.checkout_id,
+                policy_id=session.policy_id,
+            )
+            return ApprovalLinkError(status, message)
+
+        if link.used:
+            raise refuse(410, "This approval link has already been used.")
+        if link.expires_at <= _now():
+            raise refuse(410, "This approval link has expired. Ask the agent for a new one.")
+        if session.state != TransactionState.AWAITING_APPROVAL:
+            raise refuse(
+                410,
+                f"This checkout no longer needs approval (state: {session.state.value}).",
+            )
+        if not verify_proposal_fingerprint(session.proposal, link.proposal_fingerprint):
+            raise refuse(
+                409,
+                "The proposal changed after this link was issued, so it cannot approve it.",
+            )
+        return link, session
+
+    def get_approval_summary(self, token: str) -> Dict[str, Any]:
+        """What the owner is being asked to approve. Does not consume the link."""
+        link, session = self._resolve_approval_link(token)
+        policy = self._policies[session.policy_id]
+        evaluation = DeterministicPolicyEngine.evaluate(session.proposal, policy)
+        reasons = [c.reason for c in evaluation.checks if not c.passed]
+        proposal = session.proposal
+        return {
+            "checkout_id": session.checkout_id,
+            "state": session.state.value,
+            "merchant": proposal.merchant,
+            "items": [item.model_dump() for item in proposal.items],
+            "item_subtotal": proposal.item_subtotal,
+            "shipping_fee": proposal.shipping_fee,
+            "tax_fee": proposal.tax_fee,
+            "total_amount": proposal.total_amount,
+            "currency": proposal.currency,
+            "agent_id": proposal.agent_id,
+            "decision": evaluation.decision.value,
+            "reasons": reasons or [evaluation.primary_reason],
+            "expires_at": link.expires_at,
+        }
+
+    def redeem_approval_link(self, token: str) -> CheckoutSession:
+        """Approve the checkout exactly once with a valid link."""
+        link, session = self._resolve_approval_link(token)
+        policy = self._policies[session.policy_id]
+        link.used = True
+        return self.approve_proposal(
+            session.checkout_id, user_id=policy.user_id, via="approval_link"
+        )
 
     async def execute_payment(
         self,

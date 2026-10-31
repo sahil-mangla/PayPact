@@ -52,6 +52,22 @@ def _env_limit() -> int:
 llm_limiter = SlidingWindowLimiter(_env_limit)
 
 
+def _token_env_limit() -> int:
+    try:
+        return int(os.getenv("TOKEN_RATE_LIMIT_PER_MINUTE", "60"))
+    except ValueError:
+        return 60
+
+
+# Owner-token and approval-link endpoints: bounds guessing and audit-ledger spam.
+token_limiter = SlidingWindowLimiter(_token_env_limit)
+
+
 async def llm_rate_limit(request: Request) -> None:
     client = request.client.host if request.client else "unknown"
     llm_limiter.check(client)
+
+
+async def token_rate_limit(request: Request) -> None:
+    client = request.client.host if request.client else "unknown"
+    token_limiter.check(client)

@@ -244,6 +244,7 @@ async def test_api_receipt_and_simulate_webhook_endpoints():
         policy_data = intent_resp.json()
         reg_resp = await client.post("/api/authorizations", json=policy_data)
         policy_id = reg_resp.json()["policy_id"]
+        client.headers["X-Owner-Token"] = reg_resp.json()["owner_token"]
 
         prop_resp = await client.post(
             "/api/proposals",

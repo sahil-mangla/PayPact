@@ -18,6 +18,8 @@ async def _new_checkout(client: AsyncClient, policy_prompt: str) -> str:
         "/api/authorizations/parse-intent", json={"prompt": policy_prompt}
     )
     policy = (await client.post("/api/authorizations", json=intent.json())).json()
+    # Approve and revoke are owner-only; this client acts as the owner of the policy it registered.
+    client.headers["X-Owner-Token"] = policy["owner_token"]
     proposal = await client.post(
         "/api/proposals",
         json={
@@ -392,8 +394,12 @@ async def test_an_existing_policy_cannot_be_overwritten_through_the_api():
                 "/api/authorizations/parse-intent", json={"prompt": AUTO_PROMPT}
             )
         ).json()
-        assert (await client.post("/api/authorizations", json=intent)).status_code == 200
-        await client.post(f"/api/authorizations/{intent['policy_id']}/revoke")
+        first = await client.post("/api/authorizations", json=intent)
+        assert first.status_code == 200
+        await client.post(
+            f"/api/authorizations/{intent['policy_id']}/revoke",
+            headers={"X-Owner-Token": first.json()["owner_token"]},
+        )
 
         again = await client.post("/api/authorizations", json=intent)
         assert again.status_code == 409
