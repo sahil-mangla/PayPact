@@ -202,10 +202,10 @@ The agent only buys what the nine-item catalogue actually contains, so a request
 ### Test suites
 
 ```bash
-# Backend: 221 tests (policy, state machine, webhooks, API, agent, crypto, benchmark)
+# Backend: 222 tests (policy, state machine, webhooks, API, agent, crypto, benchmark)
 cd backend && source .venv/bin/activate && pytest -q
 
-# Frontend: 35 tests, plus lint, typecheck and a production build
+# Frontend: 60 tests, plus lint, typecheck and a production build
 cd frontend && npm test && npm run lint && npm run typecheck && npm run build
 ```
 
