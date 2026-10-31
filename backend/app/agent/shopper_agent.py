@@ -120,6 +120,24 @@ class ShopperAgent:
             return "computer monitor"
         return None
 
+    @staticmethod
+    def _amounts_in_prompt(user_prompt: str) -> list:
+        """Every positive amount the user actually typed ("5,000", "₹4000", "5k")."""
+        text = user_prompt.lower()
+        amounts = []
+        for raw, suffix in re.findall(
+            r"((?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d{1,2})?)\s*(k\b)?", text
+        ):
+            try:
+                val = float(raw.replace(",", ""))
+            except ValueError:
+                continue
+            if suffix:
+                val *= 1000
+            if val > 0:
+                amounts.append(round(val, 2))
+        return amounts
+
     @classmethod
     def parse_intent_to_policy(
         cls,
@@ -177,22 +195,29 @@ class ShopperAgent:
                     # An unrecognised label (e.g. "computer accessories") must not
                     # override what the prompt plainly says
                     category = cls._category_from_prompt(user_prompt) or cat_str
+            # The budget is spending authority, so the model may only restate a number the
+            # user actually typed. Anything else it produces is ignored, not trusted.
+            typed = set(cls._amounts_in_prompt(user_prompt))
+            heuristic = sorted(typed)
+            if len(heuristic) >= 2:
+                auto_limit, max_total = heuristic[-2], heuristic[-1]
+            elif len(heuristic) == 1:
+                max_total = heuristic[0]
+                auto_limit = round(max_total * 0.8, 2)
+
             if "max_budget" in llm_data and isinstance(
                 llm_data["max_budget"], (int, float)
             ):
-                parsed_max = float(llm_data["max_budget"])
-                if parsed_max > 0:
+                parsed_max = round(float(llm_data["max_budget"]), 2)
+                if parsed_max > 0 and parsed_max in typed:
                     max_total = parsed_max
+                    auto_limit = round(max_total * 0.8, 2)
             if "auto_buy_limit" in llm_data and isinstance(
                 llm_data["auto_buy_limit"], (int, float)
             ):
-                parsed_auto = float(llm_data["auto_buy_limit"])
-                if parsed_auto > 0:
+                parsed_auto = round(float(llm_data["auto_buy_limit"]), 2)
+                if parsed_auto > 0 and parsed_auto in typed:
                     auto_limit = min(parsed_auto, max_total)
-                else:
-                    auto_limit = round(max_total * 0.8, 2)
-            else:
-                auto_limit = round(max_total * 0.8, 2)
             if "currency" in llm_data and str(llm_data["currency"]).upper() in [
                 "INR",
                 "USD",
@@ -209,18 +234,7 @@ class ShopperAgent:
                 currency = "INR"
 
             # Extract numerical limits (budget and auto-threshold)
-            raw_matches = re.findall(
-                r"(?:₹|\$|rs\.?|inr)?\s*((?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d{1,2})?)",
-                prompt_lower,
-            )
-            clean_nums = []
-            for n in raw_matches:
-                try:
-                    val = float(n.replace(",", ""))
-                    if val > 0:
-                        clean_nums.append(val)
-                except ValueError:
-                    continue
+            clean_nums = cls._amounts_in_prompt(user_prompt)
 
             if len(clean_nums) >= 2:
                 s = sorted(clean_nums)

@@ -612,3 +612,43 @@ async def test_live_capture_without_a_reported_amount_is_not_treated_as_a_mismat
     client = _live_client_with_transport(monkeypatch, handler)
     resp = await client.capture_order("ORD123")
     assert resp.amount_reported is False
+
+
+def _llm_returns(monkeypatch, data):
+    monkeypatch.setattr(
+        "app.agent.gemini_client.GeminiClient.parse_intent", classmethod(lambda cls, p: data)
+    )
+
+
+def test_an_llm_budget_the_user_never_typed_is_ignored(monkeypatch):
+    from app.agent.shopper_agent import ShopperAgent
+
+    _llm_returns(
+        monkeypatch,
+        {"category": "keyboard", "max_budget": 900000, "auto_buy_limit": 800000, "currency": "INR"},
+    )
+    policy = ShopperAgent.parse_intent_to_policy(
+        "Find a mechanical keyboard under ₹5,000, auto-buy under ₹4,000"
+    )
+    assert policy.maximum_total == 5000.0
+    assert policy.automatic_purchase_limit == 4000.0
+
+
+def test_an_llm_budget_that_matches_the_prompt_is_kept(monkeypatch):
+    from app.agent.shopper_agent import ShopperAgent
+
+    _llm_returns(
+        monkeypatch,
+        {"category": "keyboard", "max_budget": 7500, "auto_buy_limit": 6000, "currency": "INR"},
+    )
+    policy = ShopperAgent.parse_intent_to_policy("keyboard, 7500 max, auto 6,000")
+    assert policy.maximum_total == 7500.0
+    assert policy.automatic_purchase_limit == 6000.0
+
+
+def test_k_suffix_amounts_count_as_typed_by_the_user(monkeypatch):
+    from app.agent.shopper_agent import ShopperAgent
+
+    _llm_returns(monkeypatch, {"category": "keyboard", "max_budget": 5000, "currency": "INR"})
+    policy = ShopperAgent.parse_intent_to_policy("keyboard under 5k")
+    assert policy.maximum_total == 5000.0
