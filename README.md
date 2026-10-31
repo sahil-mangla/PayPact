@@ -189,10 +189,10 @@ The sandbox does not support INR, so INR amounts are converted to USD at a fixed
 ### Test suites
 
 ```bash
-# Backend: 189 tests (policy, state machine, webhooks, API, agent, crypto, benchmark)
+# Backend: 211 tests (policy, state machine, webhooks, API, agent, crypto, benchmark)
 cd backend && source .venv/bin/activate && pytest -q
 
-# Frontend: 32 tests, plus lint, typecheck and a production build
+# Frontend: 35 tests, plus lint, typecheck and a production build
 cd frontend && npm test && npm run lint && npm run typecheck && npm run build
 ```
 
