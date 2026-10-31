@@ -1,5 +1,18 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { apiFetch, API_TIMEOUT_MS, getApiBaseUrl, isConnectionProblem } from '../lib/api';
+import {
+  apiFetch,
+  API_TIMEOUT_MS,
+  approveCheckout,
+  createApprovalLink,
+  getApiBaseUrl,
+  isConnectionProblem,
+  listPolicyCheckouts,
+  loadOwnerToken,
+  MISSING_OWNER_TOKEN,
+  ownerHeaders,
+  revokePolicyRequest,
+  saveOwnerToken,
+} from '../lib/api';
 
 describe('apiFetch', () => {
   beforeEach(() => {
@@ -107,5 +120,91 @@ describe('isConnectionProblem', () => {
     expect(isConnectionProblem("Can't reach the server. Check that the backend is running.")).toBe(true);
     expect(isConnectionProblem('The server took too long to respond. It may be waking up.')).toBe(true);
     expect(isConnectionProblem('Exceeds maximum authorized budget (4699.00 > 3000.00).')).toBe(false);
+  });
+});
+
+
+describe('owner token', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  const okJson = (body: unknown) =>
+    new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } });
+
+  it('sends X-Owner-Token when approving', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(okJson({ state: 'AUTHORIZED' }));
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    await approveCheckout('chk_1', 'otok');
+
+    expect(String(fetchMock.mock.calls[0][0])).toContain('/checkouts/chk_1/approve');
+    const headers = fetchMock.mock.calls[0][1].headers;
+    expect(headers['X-Owner-Token']).toBe('otok');
+    expect(headers['Content-Type']).toBe('application/json');
+  });
+
+  it('sends X-Owner-Token when revoking and minting a link', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockImplementation(() => Promise.resolve(okJson({ approval_url: 'u', expires_at: 'e', status: 'revoked' })));
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    await revokePolicyRequest('pol_1', 'otok');
+    await createApprovalLink('chk_1', 'otok');
+    await listPolicyCheckouts('pol_1', 'otok');
+
+    const urls = fetchMock.mock.calls.map((c) => String(c[0]));
+    expect(urls[0]).toContain('/authorizations/pol_1/revoke');
+    expect(urls[1]).toContain('/checkouts/chk_1/approval-link');
+    expect(urls[2]).toContain('/authorizations/pol_1/checkouts');
+    for (const call of fetchMock.mock.calls) {
+      expect(call[1].headers['X-Owner-Token']).toBe('otok');
+    }
+  });
+
+  it('refuses to call the server at all without a token', async () => {
+    const fetchMock = vi.fn();
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    await expect(approveCheckout('chk_1', null)).rejects.toThrow(MISSING_OWNER_TOKEN);
+    await expect(revokePolicyRequest('pol_1', undefined)).rejects.toThrow(MISSING_OWNER_TOKEN);
+    await expect(createApprovalLink('chk_1', '')).rejects.toThrow(MISSING_OWNER_TOKEN);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('surfaces the server reason when the token is refused', async () => {
+    global.fetch = vi
+      .fn()
+      .mockResolvedValue(
+        new Response(JSON.stringify({ detail: 'Invalid owner token for this policy.' }), { status: 403 }),
+      ) as unknown as typeof fetch;
+    await expect(approveCheckout('chk_1', 'bad')).rejects.toThrow('Invalid owner token for this policy.');
+  });
+
+  it('tags a failed list with its status so the UI can tell 403 from a network blip', async () => {
+    global.fetch = vi.fn().mockResolvedValue(new Response('{}', { status: 403 })) as unknown as typeof fetch;
+    await expect(listPolicyCheckouts('pol_1', 'bad')).rejects.toMatchObject({ status: 403 });
+  });
+
+  it('keeps the token in sessionStorage and survives storage that throws', () => {
+    sessionStorage.clear();
+    saveOwnerToken('pol_1', 'otok');
+    expect(loadOwnerToken('pol_1')).toBe('otok');
+    expect(loadOwnerToken('pol_other')).toBeNull();
+
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new Error('blocked');
+    });
+    vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
+      throw new Error('blocked');
+    });
+    expect(() => saveOwnerToken('pol_2', 'x')).not.toThrow();
+    expect(loadOwnerToken('pol_2')).toBeNull();
+  });
+
+  it('ownerHeaders leaves the header off when there is no token', () => {
+    expect(ownerHeaders(null)).toEqual({});
+    expect(ownerHeaders('t', { A: 'b' })).toEqual({ A: 'b', 'X-Owner-Token': 't' });
   });
 });

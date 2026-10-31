@@ -103,3 +103,102 @@ export function assertPaid(session: { state?: string; failure_reason?: string | 
   if (session?.state === 'PAID') return;
   throw new Error(session?.failure_reason || 'The payment did not complete.');
 }
+
+// ---------------------------------------------------------------------------
+// Owner token. Registering a policy returns it once; only the policy's owner may approve,
+// revoke, mint approval links or list the policy's checkouts. The agent never sees it.
+// ---------------------------------------------------------------------------
+
+export const OWNER_TOKEN_HEADER = 'X-Owner-Token';
+
+const OWNER_TOKEN_KEY = (policyId: string) => `paypact_owner_token:${policyId}`;
+
+/** Remember the owner token for this tab's session so a refresh of the page state can find it. */
+export function saveOwnerToken(policyId: string, token: string): void {
+  try {
+    sessionStorage.setItem(OWNER_TOKEN_KEY(policyId), token);
+  } catch (_) {}
+}
+
+export function loadOwnerToken(policyId: string): string | null {
+  try {
+    return sessionStorage.getItem(OWNER_TOKEN_KEY(policyId));
+  } catch (_) {
+    return null;
+  }
+}
+
+export function ownerHeaders(token: string | null | undefined, extra?: Record<string, string>): Record<string, string> {
+  return token ? { ...extra, [OWNER_TOKEN_HEADER]: token } : { ...extra };
+}
+
+export const MISSING_OWNER_TOKEN =
+  'This browser does not hold the owner token for this policy, so it cannot approve or revoke. Register the policy again from this page.';
+
+/** Approve a checkout as the policy owner. Throws with the server's reason on refusal. */
+export async function approveCheckout(checkoutId: string, ownerToken: string | null | undefined, userId = 'usr_shopper') {
+  if (!ownerToken) throw new Error(MISSING_OWNER_TOKEN);
+  const res = await apiFetch(`/checkouts/${checkoutId}/approve`, {
+    method: 'POST',
+    headers: ownerHeaders(ownerToken, { 'Content-Type': 'application/json' }),
+    body: JSON.stringify({ user_id: userId }),
+  });
+  if (!res.ok) throw new Error(await errorMessage(res, 'Approval failed.'));
+  return res.json();
+}
+
+/** Revoke a policy as its owner. Throws with the server's reason on refusal. */
+export async function revokePolicyRequest(policyId: string, ownerToken: string | null | undefined) {
+  if (!ownerToken) throw new Error(MISSING_OWNER_TOKEN);
+  const res = await apiFetch(`/authorizations/${policyId}/revoke`, {
+    method: 'POST',
+    headers: ownerHeaders(ownerToken),
+  });
+  if (!res.ok) throw new Error(await errorMessage(res, 'Could not revoke the policy.'));
+  return res.json();
+}
+
+/** Mint a one-time approval link (30 minutes, bound to this exact proposal). */
+export async function createApprovalLink(
+  checkoutId: string,
+  ownerToken: string | null | undefined,
+): Promise<{ approval_url: string; expires_at: string }> {
+  if (!ownerToken) throw new Error(MISSING_OWNER_TOKEN);
+  const res = await apiFetch(`/checkouts/${checkoutId}/approval-link`, {
+    method: 'POST',
+    headers: ownerHeaders(ownerToken),
+  });
+  if (!res.ok) throw new Error(await errorMessage(res, 'Could not create an approval link.'));
+  return res.json();
+}
+
+export interface PolicyCheckout {
+  checkout_id: string;
+  state: string;
+  agent_id?: string | null;
+  merchant: string;
+  items: { sku: string; name: string; quantity: number; unit_price: number }[];
+  total_amount: number;
+  currency: string;
+  created_at?: string | null;
+  failure_reason?: string | null;
+}
+
+/** Every checkout under the policy, newest first (the owner's inbox of agent requests). */
+export async function listPolicyCheckouts(
+  policyId: string,
+  ownerToken: string | null | undefined,
+  signal?: AbortSignal,
+): Promise<PolicyCheckout[]> {
+  if (!ownerToken) throw new Error(MISSING_OWNER_TOKEN);
+  const res = await apiFetch(`/authorizations/${policyId}/checkouts`, {
+    headers: ownerHeaders(ownerToken),
+    signal,
+  });
+  if (!res.ok) {
+    const err = new Error(await errorMessage(res, 'Could not load agent requests.')) as Error & { status?: number };
+    err.status = res.status;
+    throw err;
+  }
+  return res.json();
+}
