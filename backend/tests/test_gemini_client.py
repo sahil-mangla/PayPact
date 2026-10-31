@@ -71,3 +71,30 @@ def test_gemini_client_generate_rationale_success():
         )
         assert rationale is not None
         assert "Keychron K2" in rationale
+
+
+def test_gemini_api_key_is_sent_as_a_header_never_in_the_url():
+    import httpx
+
+    seen = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(200, json={"candidates": []})
+
+    real_client = httpx.Client
+
+    def factory(*args, **kwargs):
+        kwargs["transport"] = httpx.MockTransport(handler)
+        return real_client(*args, **kwargs)
+
+    with patch.object(GeminiClient, "get_api_key", return_value="SECRET-KEY-123"), patch(
+        "app.agent.gemini_client.httpx.Client", factory
+    ):
+        GeminiClient.check_health()
+        GeminiClient.parse_intent("keyboard under 5000")
+
+    assert len(seen) == 2
+    for request in seen:
+        assert "SECRET-KEY-123" not in str(request.url)
+        assert request.headers["x-goog-api-key"] == "SECRET-KEY-123"

@@ -40,9 +40,9 @@ class GeminiClient:
             }
 
         try:
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}?key={key}"
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}"
             with httpx.Client(timeout=3.0) as client:
-                res = client.get(url)
+                res = client.get(url, headers={"x-goog-api-key": key})
                 if res.status_code == 200:
                     return {
                         "available": True,
@@ -78,7 +78,7 @@ class GeminiClient:
             "Output ONLY valid JSON inside a ```json ``` block."
         )
 
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent?key={key}"
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
         payload = {
             "contents": [{"parts": [{"text": prompt}]}],
             "generationConfig": {
@@ -89,7 +89,9 @@ class GeminiClient:
 
         try:
             with httpx.Client(timeout=GEMINI_TIMEOUT) as client:
-                res = client.post(url, json=payload)
+                res = client.post(
+                    url, json=payload, headers={"x-goog-api-key": key}
+                )
                 if res.status_code == 200:
                     data = res.json()
                     candidates = data.get("candidates", [])
@@ -143,7 +145,7 @@ class GeminiClient:
             "Always complete your thoughts and conclude with a period."
         )
 
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent?key={key}"
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
         payload = {
             "contents": [{"parts": [{"text": prompt}]}],
             "generationConfig": {
@@ -154,7 +156,9 @@ class GeminiClient:
 
         try:
             with httpx.Client(timeout=GEMINI_TIMEOUT) as client:
-                res = client.post(url, json=payload)
+                res = client.post(
+                    url, json=payload, headers={"x-goog-api-key": key}
+                )
                 if res.status_code == 200:
                     data = res.json()
                     candidates = data.get("candidates", [])
