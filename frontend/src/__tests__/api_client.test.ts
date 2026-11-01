@@ -68,7 +68,7 @@ describe('apiFetch', () => {
   });
 });
 
-import { errorMessage, assertPaid } from '../lib/api';
+import { errorMessage, assertPaid, proposalError, ApiError } from '../lib/api';
 
 describe('errorMessage', () => {
   it('uses the server-provided reason', async () => {
@@ -206,5 +206,41 @@ describe('owner token', () => {
   it('ownerHeaders leaves the header off when there is no token', () => {
     expect(ownerHeaders(null)).toEqual({});
     expect(ownerHeaders('t', { A: 'b' })).toEqual({ A: 'b', 'X-Owner-Token': 't' });
+  });
+});
+
+describe('proposalError', () => {
+  const noMatch = {
+    requested: { kind: 'flight', destination: 'Singapore' },
+    closest: {
+      sku: 'TR-FLIGHT-BLR',
+      name: 'IndiGo Flight 6E-204',
+      merchant: 'IndiGo Corporate',
+      unit_price: 4299,
+      currency: 'INR',
+      differences: ['it flies to Bengaluru, not Singapore'],
+    },
+  };
+
+  it('keeps the plain message and attaches the structured no-match', async () => {
+    const res = new Response(JSON.stringify({ detail: 'No catalogue item matches this request.', no_match: noMatch }), { status: 400 });
+    const err = await proposalError(res, 'fallback');
+    expect(err).toBeInstanceOf(ApiError);
+    expect(err.message).toBe('No catalogue item matches this request.');
+    expect(err.noMatch).toEqual(noMatch);
+  });
+
+  it('leaves noMatch unset for any other error and still uses the fallback', async () => {
+    const plain = await proposalError(new Response('{"detail":"Policy not found."}', { status: 404 }), 'fallback');
+    expect(plain.message).toBe('Policy not found.');
+    expect(plain.noMatch).toBeUndefined();
+    const garbage = await proposalError(new Response('<html>', { status: 502 }), 'fallback');
+    expect(garbage.message).toBe('fallback');
+    expect(garbage.noMatch).toBeUndefined();
+  });
+
+  it('ignores a malformed no_match instead of crashing', async () => {
+    const res = new Response(JSON.stringify({ detail: 'x', no_match: 'nope' }), { status: 400 });
+    expect((await proposalError(res, 'fallback')).noMatch).toBeUndefined();
   });
 });
