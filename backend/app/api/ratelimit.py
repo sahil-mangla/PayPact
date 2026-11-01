@@ -38,7 +38,16 @@ class SlidingWindowLimiter:
             )
         hits.append(now)
         if len(self._hits) > _MAX_TRACKED_CLIENTS:
-            for key in [k for k, v in self._hits.items() if not v][:1000]:
+            self._evict(now)
+
+    def _evict(self, now: float) -> None:
+        # A client whose newest hit is outside the window has nothing left to limit.
+        for key in [k for k, v in self._hits.items() if not v or now - v[-1] > self._window]:
+            del self._hits[key]
+        # Still over the cap: every client is active, so drop the least recently seen.
+        excess = len(self._hits) - _MAX_TRACKED_CLIENTS
+        if excess > 0:
+            for key in sorted(self._hits, key=lambda k: self._hits[k][-1])[:excess]:
                 del self._hits[key]
 
 
