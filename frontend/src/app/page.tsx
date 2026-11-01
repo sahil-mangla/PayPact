@@ -2539,7 +2539,7 @@ export default function Home() {
                       className="clean-card"
                       style={{
                         padding: '10px 14px',
-                        borderLeft: `3px solid ${ev.event_type.includes('BLOCKED') || ev.event_type.includes('REJECTED') || ev.event_type.includes('DENIED') ? '#dc2626' : ev.event_type.includes('COMPLETED') || ev.event_type.includes('PAID') ? '#059669' : '#0070ba'}`,
+                        borderLeft: `3px solid ${ev.event_type.includes('BLOCKED') || ev.event_type.includes('REJECTED') || ev.event_type.includes('DENIED') || ev.event_type.includes('REFUSED') ? '#dc2626' : ev.event_type.includes('COMPLETED') || ev.event_type.includes('PAID') ? '#059669' : '#0070ba'}`,
                       }}
                     >
                       <div className="wrap-sm" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '4px' }}>

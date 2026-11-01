@@ -91,6 +91,15 @@ async def test_full_flow_propose_wait_for_owner_then_pay():
         assert "owner" in refused["summary"]
         assert coordinator.get_session(checkout_id).paypal_order_id is None
 
+        # The refusal is audited against the checkout, with the state it was refused in.
+        refusals = coordinator.audit_ledger.get_events(
+            checkout_id=checkout_id, event_type="PAYMENT_REFUSED"
+        )
+        assert len(refusals) == 1
+        assert refusals[0].decision == "DENIED"
+        assert refusals[0].metadata == {"state": "AWAITING_APPROVAL"}
+        assert "AWAITING_APPROVAL" in refusals[0].reason
+
         # The agent has no token, so approving over HTTP as the agent is refused too.
         async with _http() as client:
             assert (
@@ -113,6 +122,14 @@ async def test_full_flow_propose_wait_for_owner_then_pay():
 
         again = await _call(session, "pay", checkout_id=checkout_id)  # idempotent, no double charge
         assert again["state"] == "PAID"
+
+        # The duplicate-PAID path keeps its own event and adds no PAYMENT_REFUSED.
+        assert len(coordinator.audit_ledger.get_events(
+            checkout_id=checkout_id, event_type="PAYMENT_REFUSED"
+        )) == 1
+        assert coordinator.audit_ledger.get_events(
+            checkout_id=checkout_id, event_type="DUPLICATE_EXECUTION_BLOCKED"
+        )
 
     # The purchase the MCP agent made is the same one the web UI reads.
     async with _http() as client:

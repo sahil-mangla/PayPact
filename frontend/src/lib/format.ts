@@ -4,6 +4,7 @@
 const EVENT_LABELS: Record<string, string> = {
   APPROVAL_DENIED: 'Approval refused',
   APPROVAL_LINK_CREATED: 'Approval link created',
+  PAYMENT_REFUSED: 'Payment refused: not approved yet',
 };
 
 const APPROVAL_VIA: Record<string, string> = {

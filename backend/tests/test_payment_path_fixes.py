@@ -124,6 +124,20 @@ async def _checkout_with_order(prompt: str):
 
 
 @pytest.mark.asyncio
+async def test_live_order_before_approval_is_refused_and_audited():
+    from app.api.routers import coordinator
+
+    async with _client() as client:
+        checkout_id = await _new_checkout(client, APPROVAL_PROMPT)
+    with pytest.raises(ValueError):
+        await coordinator.create_paypal_order_only(checkout_id)
+    refusals = coordinator.audit_ledger.get_events(
+        checkout_id=checkout_id, event_type="PAYMENT_REFUSED"
+    )
+    assert len(refusals) == 1 and refusals[0].decision == "DENIED"
+
+
+@pytest.mark.asyncio
 async def test_capture_is_refused_for_a_checkout_that_never_created_an_order():
     async with _client() as client:
         checkout_id = await _new_checkout(client, AUTO_PROMPT)

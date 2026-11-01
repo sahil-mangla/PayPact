@@ -465,6 +465,19 @@ class TransactionCoordinator:
             session.checkout_id, user_id=policy.user_id, via="approval_link"
         )
 
+    def _record_payment_refused(self, session: CheckoutSession) -> None:
+        """Audit a pay attempt on a checkout that is not AUTHORIZED (e.g. not yet approved)."""
+        policy = self._policies.get(session.policy_id)
+        self.audit_ledger.record_event(
+            event_type="PAYMENT_REFUSED",
+            checkout_id=session.checkout_id,
+            policy_version=policy.version if policy else None,
+            proposal_fingerprint=session.proposal.proposal_fingerprint,
+            decision="DENIED",
+            reason=f"Payment refused: checkout is {session.state.value}, not AUTHORIZED.",
+            metadata={"state": session.state.value},
+        )
+
     async def execute_payment(
         self,
         checkout_id: str,
@@ -490,6 +503,7 @@ class TransactionCoordinator:
 
             # Verify state is AUTHORIZED
             if session.state != TransactionState.AUTHORIZED:
+                self._record_payment_refused(session)
                 raise ValueError(
                     f"Cannot execute checkout in state '{session.state.value}'. Must be AUTHORIZED."
                 )
@@ -629,6 +643,7 @@ class TransactionCoordinator:
                 return session
 
             if session.state != TransactionState.AUTHORIZED:
+                self._record_payment_refused(session)
                 raise ValueError(
                     f"Cannot execute checkout in state '{session.state.value}'. Must be AUTHORIZED."
                 )
