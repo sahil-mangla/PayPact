@@ -195,9 +195,10 @@ The sandbox does not support INR, so INR amounts are converted to USD at a fixed
 | `ENABLE_WEBHOOK_SIMULATION` | unset | `/api/webhooks/simulate` always works in mock mode; against live PayPal it is off unless this is `true`. |
 | `INR_TO_USD_RATE` | `83` | INR per USD for the sandbox conversion. |
 | `CORS_ORIGINS` | localhost origins | Comma-separated allowed origins, or `*`. |
-| `FRONTEND_BASE_URL` | `http://localhost:3000` | Base URL of the web app, used to build one-time approval links (`<base>/approve/<token>`). |
+| `FRONTEND_BASE_URL` | `http://localhost:3000` | Base URL of the web app, used to build one-time approval links (`<base>/approve/<token>`). Falls back to `FRONTEND_URL` when unset. |
 | `TOKEN_RATE_LIMIT_PER_MINUTE` | `60` | Per-client limit on the owner-token and approval-link endpoints. `0` disables it. |
 | `NEXT_PUBLIC_API_URL` / `BACKEND_URL` | `http://localhost:8000` | Where the Next.js `/api` proxy sends requests. |
+| `BACKEND_INTERNAL_HOST` | unset | Last-resort backend address for the Next.js `/api` proxy, used only when neither `NEXT_PUBLIC_API_URL` nor `BACKEND_URL` is set. A bare name such as `paypact-backend` becomes `https://paypact-backend.onrender.com`. `render.yaml` fills it from the backend service. |
 
 ### What to type
 
@@ -206,7 +207,7 @@ The agent only buys what the nine-item catalogue actually contains, so a request
 ### Test suites
 
 ```bash
-# Backend: 271 tests (policy, state machine, webhooks, API, owner approval, MCP, agent, crypto, benchmark)
+# Backend: 275 tests (policy, state machine, webhooks, API, owner approval, MCP, agent, crypto, benchmark)
 cd backend && source .venv/bin/activate && pytest -q
 
 # Frontend: 93 tests, plus lint, typecheck and a production build
@@ -349,7 +350,7 @@ The LLM only proposes. It never sees PayPal credentials and has no network path 
 - It turns the user's sentence into policy numbers, and a number is accepted only if the user actually typed it. A budget the model invents is ignored.
 - It chooses the product through tool calls. The SKU must have been returned by a tool, must satisfy the request and the agent's category, and is priced from the catalogue. Otherwise the deterministic ranking decides, and the UI shows the tool calls and any override.
 - It writes the recommendation text. That text is dropped if it cites a price or SKU that is not in the verified proposal.
-- It does not choose the product. Matching against the catalogue is deterministic and ignores merchant-written descriptions.
+- It never has the last word. The policy engine decides on the verified proposal, and catalogue matching and the fallback ranking are deterministic and ignore merchant-written descriptions.
 
 ---
 

@@ -5,7 +5,7 @@ into os.environ before app.api.routers instantiates the TransactionCoordinator
 (and its PayPalClient) at module level.
 """
 
-import app.config  # noqa: F401 — side-effect: loads .env with override=True
+import app.config  # noqa: F401 — side-effect: loads backend/.env without overriding variables already set
 
 import os
 
