@@ -3,12 +3,12 @@ from __future__ import annotations
 import os
 import time
 from typing import Any, Dict, List, Literal, Optional
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel, Field
 
 from app.agent.shopper_agent import ShopperAgent
-from app.api.ratelimit import llm_rate_limit
+from app.api.ratelimit import llm_rate_limit, token_rate_limit
 from app.catalogue.products import CATALOGUE, Product
 from app.lab.benchmark import (
     IntegrityLab,
@@ -17,10 +17,12 @@ from app.lab.benchmark import (
 )
 from app.models.schemas import (
     AuthorizationPolicy,
+    PolicyRegistration,
     PurchaseProposal,
     SignedAuditReceipt,
 )
 from app.state.machine import (
+    ApprovalLinkError,
     CheckoutNotFoundError,
     CheckoutSession,
     TransactionCoordinator,
@@ -32,6 +34,39 @@ def _checkout_error(e: Exception) -> HTTPException:
     """404 for an unknown checkout, 400 for anything the state machine refuses."""
     status = 404 if isinstance(e, CheckoutNotFoundError) else 400
     return HTTPException(status_code=status, detail=str(e))
+
+
+OWNER_TOKEN_HEADER = "X-Owner-Token"
+
+
+def _require_owner(
+    policy_id: str,
+    token: Optional[str],
+    action: str,
+    checkout_id: Optional[str] = None,
+) -> None:
+    """Allow only the holder of the policy's owner token: 401 if none was sent, 403 if wrong.
+
+    Every refusal is written to the audit ledger, so a self-approving agent leaves a trace.
+    """
+    if token is None or not token.strip():
+        coordinator.record_approval_denied(
+            f"{action.capitalize()} refused: no owner token was presented.",
+            action,
+            checkout_id=checkout_id,
+            policy_id=policy_id,
+        )
+        raise HTTPException(
+            status_code=401, detail=f"Owner token required (send the {OWNER_TOKEN_HEADER} header)."
+        )
+    if not coordinator.verify_owner_token(policy_id, token):
+        coordinator.record_approval_denied(
+            f"{action.capitalize()} refused: the owner token did not match this policy.",
+            action,
+            checkout_id=checkout_id,
+            policy_id=policy_id,
+        )
+        raise HTTPException(status_code=403, detail="Invalid owner token for this policy.")
 
 
 # Global singleton coordinator & lab for the app
@@ -173,9 +208,12 @@ async def parse_intent_to_policy(req: ParseIntentRequest):
     )
 
 
-@router.post("/authorizations", response_model=AuthorizationPolicy)
+@router.post("/authorizations", response_model=PolicyRegistration)
 async def register_policy(policy: AuthorizationPolicy):
     """Register user-confirmed authorization policy.
+
+    The response carries the owner token once. Only its hash is kept, so a lost token cannot be
+    recovered; the owner is the only party who ever sees it, never the agent.
 
     Spend and revocation state belong to the server, so anything the client sends for them is
     reset, and an existing policy id can never be replaced (that would undo a revocation).
@@ -188,7 +226,9 @@ async def register_policy(policy: AuthorizationPolicy):
     policy.is_revoked = False
     for quota in policy.agent_quotas.values():
         quota.spent_budget = 0.0
-    return coordinator.register_policy(policy)
+    registered = coordinator.register_policy(policy)
+    token = coordinator.issue_owner_token(registered.policy_id)
+    return PolicyRegistration(**registered.model_dump(), owner_token=token)
 
 
 @router.get("/authorizations/{policy_id}", response_model=AuthorizationPolicy)
@@ -199,8 +239,33 @@ async def get_policy(policy_id: str):
     return policy
 
 
-@router.post("/authorizations/{policy_id}/revoke")
-async def revoke_policy(policy_id: str):
+@router.get(
+    "/authorizations/{policy_id}/checkouts", dependencies=[Depends(token_rate_limit)]
+)
+async def list_policy_checkouts(
+    policy_id: str,
+    x_owner_token: Optional[str] = Header(None, alias=OWNER_TOKEN_HEADER),
+):
+    """The checkouts opened under this policy (by the web agent or an MCP agent), newest first.
+
+    Owner-only: this is how the owner finds a request that is waiting for their approval.
+    """
+    if not coordinator.get_policy(policy_id):
+        raise HTTPException(status_code=404, detail="Policy not found.")
+    _require_owner(policy_id, x_owner_token, "list-checkouts")
+    return coordinator.list_policy_checkouts(policy_id)
+
+
+@router.post(
+    "/authorizations/{policy_id}/revoke", dependencies=[Depends(token_rate_limit)]
+)
+async def revoke_policy(
+    policy_id: str,
+    x_owner_token: Optional[str] = Header(None, alias=OWNER_TOKEN_HEADER),
+):
+    if not coordinator.get_policy(policy_id):
+        raise HTTPException(status_code=404, detail="Policy not found.")
+    _require_owner(policy_id, x_owner_token, "revoke")
     success = coordinator.revoke_policy(policy_id)
     if not success:
         raise HTTPException(status_code=404, detail="Policy not found.")
@@ -210,21 +275,28 @@ async def revoke_policy(policy_id: str):
 # ----------------------------------------------------
 # 3. Agent Proposals & Checkout Lifecycle
 # ----------------------------------------------------
-@router.post("/proposals", dependencies=[Depends(llm_rate_limit)])
-async def create_proposal(req: CreateProposalRequest):
-    policy = coordinator.get_policy(req.policy_id)
+async def run_proposal(
+    prompt: str,
+    policy_id: str,
+    preferred_sku: Optional[str] = None,
+    agent_id: Optional[str] = "agent_hardware",
+) -> Dict[str, Any]:
+    """Have the shopper agent propose a purchase and open a checkout session for it.
+
+    Shared by POST /api/proposals and the MCP propose_purchase tool, so both go through the
+    same agent and the same policy gate. Raises HTTPException (404 unknown policy, 400 agent error).
+    """
+    policy = coordinator.get_policy(policy_id)
     if not policy:
-        raise HTTPException(
-            status_code=404, detail=f"Policy '{req.policy_id}' not found."
-        )
+        raise HTTPException(status_code=404, detail=f"Policy '{policy_id}' not found.")
 
     try:
         agent_res = await run_in_threadpool(
             ShopperAgent.generate_proposal,
-            user_prompt=req.prompt,
+            user_prompt=prompt,
             policy=policy,
-            preferred_sku=req.preferred_sku,
-            agent_id=req.agent_id,
+            preferred_sku=preferred_sku,
+            agent_id=agent_id,
         )
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -244,16 +316,81 @@ async def create_proposal(req: CreateProposalRequest):
     }
 
 
-@router.post("/checkouts/{checkout_id}/approve", response_model=CheckoutSession)
-async def approve_checkout(checkout_id: str, req: ApproveProposalRequest):
+@router.post("/proposals", dependencies=[Depends(llm_rate_limit)])
+async def create_proposal(req: CreateProposalRequest):
+    return await run_proposal(
+        req.prompt, req.policy_id, preferred_sku=req.preferred_sku, agent_id=req.agent_id
+    )
+
+
+@router.post(
+    "/checkouts/{checkout_id}/approve",
+    response_model=CheckoutSession,
+    dependencies=[Depends(token_rate_limit)],
+)
+async def approve_checkout(
+    checkout_id: str,
+    req: ApproveProposalRequest,
+    x_owner_token: Optional[str] = Header(None, alias=OWNER_TOKEN_HEADER),
+):
+    session = coordinator.get_session(checkout_id)
+    if not session:
+        raise HTTPException(status_code=404, detail=f"Checkout '{checkout_id}' not found.")
+    _require_owner(session.policy_id, x_owner_token, "approve", checkout_id=checkout_id)
     try:
         return coordinator.approve_proposal(checkout_id, user_id=req.user_id)
     except Exception as e:
         raise _checkout_error(e)
 
 
-@router.post("/checkouts/{checkout_id}/execute")
-async def execute_checkout(checkout_id: str, req: ExecutePaymentRequest):
+@router.post(
+    "/checkouts/{checkout_id}/approval-link", dependencies=[Depends(token_rate_limit)]
+)
+async def create_approval_link(
+    checkout_id: str,
+    x_owner_token: Optional[str] = Header(None, alias=OWNER_TOKEN_HEADER),
+):
+    """Mint a one-time link (30 minutes, bound to this exact proposal) the owner can open to approve."""
+    session = coordinator.get_session(checkout_id)
+    if not session:
+        raise HTTPException(status_code=404, detail=f"Checkout '{checkout_id}' not found.")
+    _require_owner(session.policy_id, x_owner_token, "approval-link", checkout_id=checkout_id)
+    try:
+        token, expires_at = coordinator.mint_approval_link(checkout_id)
+    except Exception as e:
+        raise _checkout_error(e)
+    # FRONTEND_URL is what render.yaml sets (and what the PayPal return URLs use), so fall back to it.
+    base = (
+        os.getenv("FRONTEND_BASE_URL") or os.getenv("FRONTEND_URL") or "http://localhost:3000"
+    ).strip().rstrip("/")
+    return {"approval_url": f"{base}/approve/{token}", "expires_at": expires_at}
+
+
+@router.get("/approvals/{token}", dependencies=[Depends(token_rate_limit)])
+async def get_approval_summary(token: str):
+    """Human-readable summary of what a link would approve. Does not use up the link."""
+    try:
+        return coordinator.get_approval_summary(token)
+    except ApprovalLinkError as e:
+        raise HTTPException(status_code=e.status_code, detail=e.message)
+
+
+@router.post(
+    "/approvals/{token}",
+    response_model=CheckoutSession,
+    dependencies=[Depends(token_rate_limit)],
+)
+async def redeem_approval_link(token: str):
+    """Approve the checkout the link was minted for. Works once."""
+    try:
+        return coordinator.redeem_approval_link(token)
+    except ApprovalLinkError as e:
+        raise HTTPException(status_code=e.status_code, detail=e.message)
+    except Exception as e:
+        raise _checkout_error(e)
+
+
+async def run_execute(checkout_id: str, req: ExecutePaymentRequest) -> Dict[str, Any]:
     """
     Execute step 1: Runs pre-execution invariant gate, creates PayPal order.
 
@@ -338,6 +475,11 @@ async def execute_checkout(checkout_id: str, req: ExecutePaymentRequest):
             }
     except Exception as e:
         raise _checkout_error(e)
+
+
+@router.post("/checkouts/{checkout_id}/execute")
+async def execute_checkout(checkout_id: str, req: ExecutePaymentRequest):
+    return await run_execute(checkout_id, req)
 
 
 @router.post("/checkouts/{checkout_id}/capture")

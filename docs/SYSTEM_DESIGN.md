@@ -208,6 +208,16 @@ stateDiagram-v2
     CANCELLED --> [*]
 ```
 
+### 5.1 Who may approve: owner token, one-time links and the MCP surface
+
+The transition `AWAITING_APPROVAL -> AUTHORIZED` is the one an agent must never be able to trigger, so it is gated by identity rather than by convention:
+
+- **Owner token.** Registering a policy returns a random `owner_token` once; only its SHA-256 hash is kept on the policy (a pydantic `PrivateAttr`, never serialized). `POST /api/checkouts/{id}/approve` and `POST /api/authorizations/{id}/revoke` require it in `X-Owner-Token` and compare hashes with `hmac.compare_digest`. Missing is 401, wrong is 403, and either is recorded as an `APPROVAL_DENIED` ledger event without the token that was tried.
+- **One-time approval links.** `POST /api/checkouts/{id}/approval-link` (owner token required) mints a random token, stored hashed, bound to the checkout and its proposal fingerprint, valid 30 minutes and for one use. `GET /api/approvals/{token}` shows a summary without approving; `POST` approves once. A used, expired, drifted or no-longer-awaiting link is refused (410, or 409 for drift) and recorded as an `APPROVAL_DENIED` event; an unknown token is a 404 that is not audited, and a used or expired link is deleted the next time any link is minted, after which it answers 404 as unknown. The dashboard route `/approve/[token]` renders this for a human.
+- **MCP server** (`backend/app/mcp_server.py`, streamable HTTP at `/mcp` and stdio). Four tools (`search_products`, `propose_purchase`, `get_checkout`, `pay`) call the same coordinator singleton as REST. There is no approve, revoke or policy-creation tool, and no tool result carries a token. `pay` still goes through the pre-execution gate, so it is refused until the owner has approved.
+
+Limits: the owner token is a bearer secret, whoever registers a policy owns it, `/mcp` has no authentication of its own, links are displayed rather than delivered, and state is in memory. There are still no user accounts.
+
 ---
 
 ## 6. Integrity Lab: Experimental Scenarios Matrix
@@ -265,13 +275,14 @@ paypal-hack/
 │   ├── requirements.txt / requirements-dev.txt / pyproject.toml
 │   ├── app/
 │   │   ├── main.py
+│   │   ├── mcp_server.py    # MCP server (tools, /mcp mount, stdio entry point)
 │   │   ├── config.py
-│   │   ├── api/             # routers.py (all routes), ratelimit.py
+│   │   ├── api/             # routers.py (all routes, owner-token checks, approval links), ratelimit.py
 │   │   ├── agent/           # shopper_agent, requirements matcher, Gemini and Ollama clients
 │   │   ├── catalogue/       # Fixture products, including an adversarial listing
 │   │   ├── policy/          # Deterministic policy engine and pre-execution gate
 │   │   ├── fingerprint/     # Canonical SHA-256 proposal fingerprinting
-│   │   ├── state/           # Transaction coordinator and state machine
+│   │   ├── state/           # Transaction coordinator and state machine, owner tokens, approval links
 │   │   ├── payments/        # PayPal client (Orders v2, webhook verification, mock mode)
 │   │   ├── audit/           # Hash-chained append-only event ledger
 │   │   ├── crypto/          # HMAC-SHA256 signed receipts
@@ -281,9 +292,9 @@ paypal-hack/
 ├── frontend/
 │   ├── package.json
 │   └── src/
-│       ├── app/             # page.tsx (all three tabs), layout.tsx
-│       ├── components/      # WordByWordText, particle orb
-│       ├── lib/api.ts       # backend URL resolution, fetch wrapper, error helpers
+│       ├── app/             # page.tsx (all three tabs), layout.tsx, approve/[token]/page.tsx (one-time approval page)
+│       ├── components/      # AgentRequestsPanel, ApprovalLinkButton, WordByWordText, particle orb
+│       ├── lib/api.ts       # backend URL resolution, fetch wrapper (owner-token header), error helpers
 │       └── __tests__/
 └── scripts/
     └── run_eval.py          # CLI runner for the benchmark

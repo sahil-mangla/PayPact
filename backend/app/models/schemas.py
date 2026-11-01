@@ -4,7 +4,7 @@ import math
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, List, Optional
-from pydantic import BaseModel, Field, computed_field, field_validator
+from pydantic import BaseModel, Field, PrivateAttr, computed_field, field_validator
 
 
 class PolicyDecisionType(str, Enum):
@@ -113,6 +113,9 @@ class AuthorizationPolicy(BaseModel):
     expires_at: Optional[datetime] = Field(
         None, description="Optional expiry timestamp"
     )
+    # SHA-256 of the owner token, set by the coordinator at registration. A private attribute
+    # is never part of a field, so it is absent from every dump, response and schema.
+    _owner_token_hash: Optional[str] = PrivateAttr(default=None)
 
     @field_validator("maximum_total", "automatic_purchase_limit")
     @classmethod
@@ -130,6 +133,14 @@ class AuthorizationPolicy(BaseModel):
                 f"automatic_purchase_limit ({v}) cannot exceed maximum_total ({max_total})"
             )
         return v
+
+
+class PolicyRegistration(AuthorizationPolicy):
+    """Registration response: the policy plus its owner token, shown exactly once."""
+
+    owner_token: str = Field(
+        ..., description="Bearer secret for approving and revoking; only its hash is stored"
+    )
 
 
 class PurchaseProposal(BaseModel):

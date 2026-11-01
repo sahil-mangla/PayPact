@@ -39,9 +39,21 @@ import {
 
 import { WordByWordText } from '../components/WordByWordText';
 import ParticleMorphOrb, { AiThinkingOrb } from '../components/ui/ParticleMorphOrb';
-import { apiFetch, assertPaid, errorMessage, getApiBaseUrl, isConnectionProblem } from '../lib/api';
+import {
+  apiFetch,
+  approveCheckout,
+  assertPaid,
+  errorMessage,
+  getApiBaseUrl,
+  isConnectionProblem,
+  loadOwnerToken,
+  revokePolicyRequest,
+  saveOwnerToken,
+} from '../lib/api';
+import { ApprovalLinkButton } from '../components/ApprovalLinkButton';
+import { AgentRequestsPanel } from '../components/AgentRequestsPanel';
 import { decisionBadge, decisionSummary } from '../lib/decision';
-import { formatTimestamp, humanizeEvent } from '../lib/format';
+import { describeApprovalVia, formatTimestamp, humanizeEvent } from '../lib/format';
 
 const PAYPAL_CLIENT_ID = process.env.NEXT_PUBLIC_PAYPAL_CLIENT_ID || '';
 
@@ -151,6 +163,12 @@ export default function Home() {
     'Find a wireless mechanical keyboard suitable for programming. Maximum budget ₹5,000, auto-buy under ₹4,000.'
   );
   const [policy, setPolicy] = useState<any>(null);
+  // Returned once when the policy is registered. It is what lets this page approve and revoke;
+  // an agent never receives it. A ref mirrors it so a click right after registration sees it.
+  const [ownerToken, setOwnerToken] = useState<string | null>(null);
+  const ownerTokenRef = useRef<string | null>(null);
+  // Checkouts this page proposed itself, so the agent-requests panel can tell outside agents apart.
+  const [ownCheckoutIds, setOwnCheckoutIds] = useState<string[]>([]);
   const [proposalRes, setProposalRes] = useState<any>(null);
   // The request a proposal was matched to, and why a request got no proposal (the toast is brief)
   const [proposalPrompt, setProposalPrompt] = useState<string>('');
@@ -426,7 +444,11 @@ export default function Home() {
         body: JSON.stringify(parsedPolicy),
       });
       if (!regRes.ok) throw new Error(await errorMessage(regRes, 'Could not register policy rules.'));
-      const savedPolicy = await regRes.json();
+      const { owner_token: issuedToken, ...savedPolicy } = await regRes.json();
+      ownerTokenRef.current = issuedToken || null;
+      setOwnerToken(issuedToken || null);
+      setOwnCheckoutIds([]);
+      if (issuedToken) saveOwnerToken(savedPolicy.policy_id, issuedToken);
       setPolicy(savedPolicy);
 
       setPipelineStep(3);
@@ -459,6 +481,7 @@ export default function Home() {
         throw new Error('The server sent back an unexpected response. Please try again.');
       }
       setProposalRes(data);
+      setOwnCheckoutIds((prev) => [...prev, data.checkout_id]);
       setProposalPrompt(activePrompt);
       if (data.state === 'POLICY_REJECTED') {
         setPipelineBlocked(true);
@@ -571,17 +594,14 @@ export default function Home() {
     }
   };
 
+  const currentOwnerToken = () =>
+    ownerTokenRef.current || (policy?.policy_id ? loadOwnerToken(policy.policy_id) : null);
+
   const handleApprove = async () => {
     if (!proposalRes?.checkout_id) return;
     setLoading(true);
     try {
-      const res = await apiFetch(`/checkouts/${proposalRes.checkout_id}/approve`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ user_id: 'usr_shopper' }),
-      });
-      if (!res.ok) throw new Error(await errorMessage(res, 'Approval failed.'));
-      const updated = await res.json();
+      const updated = await approveCheckout(proposalRes.checkout_id, currentOwnerToken());
       setProposalRes((prev: any) => ({ ...prev, state: updated.state, approvedByUser: true }));
     } catch (err: any) {
       setErrorMsg(err.message);
@@ -654,7 +674,7 @@ export default function Home() {
   const handleRevokePolicy = async () => {
     if (!policy?.policy_id) return;
     try {
-      await apiFetch(`/authorizations/${policy.policy_id}/revoke`, { method: 'POST' });
+      await revokePolicyRequest(policy.policy_id, currentOwnerToken());
       setPolicy((prev: any) => ({ ...prev, is_revoked: true }));
       setPipelineBlocked(true);
     } catch (err: any) {
@@ -934,11 +954,12 @@ export default function Home() {
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'space-between',
-              gap: '10px',
+              gap: '8px 10px',
+              flexWrap: 'wrap',
               background: '#ffffff',
             }}
           >
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flex: 1, overflowX: 'auto' }}>
+            <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '6px 8px', flex: '1 1 320px', minWidth: 0 }}>
               {[
                 { step: 1, title: '1. Goal & Rules' },
                 { step: 2, title: '2. Proposal Check' },
@@ -1319,11 +1340,12 @@ export default function Home() {
                               if (atk.drift !== 'none' && proposal?.checkout_id) {
                                 if (proposal.state === 'AWAITING_APPROVAL') {
                                   // The attack is drift *after* approval, so approve first.
-                                  await apiFetch(`/checkouts/${proposal.checkout_id}/approve`, {
-                                    method: 'POST',
-                                    headers: { 'Content-Type': 'application/json' },
-                                    body: JSON.stringify({ user_id: 'usr_shopper' }),
-                                  });
+                                  try {
+                                    await approveCheckout(proposal.checkout_id, ownerTokenRef.current);
+                                  } catch (err: any) {
+                                    setErrorMsg(err.message);
+                                    return;
+                                  }
                                 }
                                 if (proposal.state === 'AUTHORIZED' || proposal.state === 'AWAITING_APPROVAL') {
                                   await handleInjectDriftAndBlock(proposal.checkout_id, atk.drift);
@@ -1433,7 +1455,7 @@ export default function Home() {
                         <Lock size={14} color={policy.is_revoked ? '#b91c1c' : '#0070ba'} />
                         <h4 style={{ fontSize: '0.86rem', fontWeight: 700, color: '#0f172a' }}>Active Policy Rules</h4>
                         <span className="badge badge-neutral" style={{ fontSize: '0.75rem', padding: '1px 5px' }}>
-                          Policy ID: {policy.policy_id?.slice(0, 10) || 'Active'}
+                          Policy ID: {policy.policy_id || 'Active'}
                         </span>
                       </div>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -1537,6 +1559,22 @@ export default function Home() {
                       </div>
                     </div>
                   </motion.div>
+                )}
+
+                {/* 3. Agent requests: purchases proposed under this policy, including by outside MCP agents */}
+                {policy?.policy_id && ownerToken && !policy.is_revoked && (
+                  <AgentRequestsPanel
+                    policyId={policy.policy_id}
+                    ownerToken={ownerToken}
+                    ownCheckoutIds={ownCheckoutIds}
+                    onApproved={(session) => {
+                      setProposalRes((prev: any) =>
+                        prev && prev.checkout_id === session?.checkout_id
+                          ? { ...prev, state: session.state, approvedByUser: true }
+                          : prev,
+                      );
+                    }}
+                  />
                 )}
               </div>
 
@@ -1734,6 +1772,14 @@ export default function Home() {
                         >
                           <CheckCircle2 size={14} /> Manually Approve This Purchase
                         </motion.button>
+                      )}
+                      {proposalRes.state === 'AWAITING_APPROVAL' && !checkoutSession && (
+                        <ApprovalLinkButton
+                          checkoutId={proposalRes.checkout_id}
+                          ownerToken={ownerToken}
+                          disabled={loading}
+                          style={{ alignItems: 'stretch' }}
+                        />
                       )}
 
                       {(proposalRes.state === 'AUTHORIZED' || (checkoutSession?.state === 'AUTHORIZED')) && !checkoutSession?.state?.match(/PAID|REFUNDED|DISPUTED|POLICY_REJECTED|FAILED/) && (
@@ -2494,7 +2540,7 @@ export default function Home() {
                       className="clean-card"
                       style={{
                         padding: '10px 14px',
-                        borderLeft: `3px solid ${ev.event_type.includes('BLOCKED') || ev.event_type.includes('REJECTED') ? '#dc2626' : ev.event_type.includes('COMPLETED') || ev.event_type.includes('PAID') ? '#059669' : '#0070ba'}`,
+                        borderLeft: `3px solid ${ev.event_type.includes('BLOCKED') || ev.event_type.includes('REJECTED') || ev.event_type.includes('DENIED') || ev.event_type.includes('REFUSED') ? '#dc2626' : ev.event_type.includes('COMPLETED') || ev.event_type.includes('PAID') ? '#059669' : '#0070ba'}`,
                       }}
                     >
                       <div className="wrap-sm" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '4px' }}>
@@ -2506,6 +2552,9 @@ export default function Home() {
                         <span style={{ fontSize: '0.75rem', color: '#526077', fontFamily: 'JetBrains Mono, monospace' }} title={ev.timestamp}>{formatTimestamp(ev.timestamp)}</span>
                       </div>
                       {ev.reason && <p style={{ fontSize: '0.78rem', color: '#475569', margin: '2px 0 6px' }}>{ev.reason}</p>}
+                      {describeApprovalVia(ev.metadata?.via) && (
+                        <p style={{ fontSize: '0.75rem', color: '#526077', margin: '0 0 6px' }}>{describeApprovalVia(ev.metadata?.via)}</p>
+                      )}
                       <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap' }}>
                         {ev.event_hash && (
                           <div style={{ fontSize: '0.75rem' }}>

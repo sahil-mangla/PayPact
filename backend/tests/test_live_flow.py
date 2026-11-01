@@ -91,6 +91,8 @@ async def _authorized_checkout(client: AsyncClient) -> str:
         await client.post("/api/authorizations/parse-intent", json={"prompt": PROMPT})
     ).json()
     policy = (await client.post("/api/authorizations", json=intent)).json()
+    # This client acts as the owner of the policy it registered (approve/revoke are owner-only).
+    client.headers["X-Owner-Token"] = policy["owner_token"]
     proposal = (
         await client.post(
             "/api/proposals",

@@ -94,6 +94,8 @@ A valid LLM generation or technically formatted payment request is **not proof**
                     (Hash-chained SHA-256 event log)
 ```
 
+Two kinds of caller reach the same coordinator: the web dashboard over REST, and any outside AI agent over MCP (see "Use PayPact from any AI agent (MCP)" below). Only the policy owner can approve: the dashboard holds an owner token returned when the policy is registered, and the owner can also mint a one-time approval link for a single proposal. An agent never receives either.
+
 ---
 
 ## 3. Integrity Lab: Scripted Failure-Mode Scenarios
@@ -193,7 +195,10 @@ The sandbox does not support INR, so INR amounts are converted to USD at a fixed
 | `ENABLE_WEBHOOK_SIMULATION` | unset | `/api/webhooks/simulate` always works in mock mode; against live PayPal it is off unless this is `true`. |
 | `INR_TO_USD_RATE` | `83` | INR per USD for the sandbox conversion. |
 | `CORS_ORIGINS` | localhost origins | Comma-separated allowed origins, or `*`. |
+| `FRONTEND_BASE_URL` | `http://localhost:3000` | Base URL of the web app, used to build one-time approval links (`<base>/approve/<token>`). Falls back to `FRONTEND_URL` when unset. |
+| `TOKEN_RATE_LIMIT_PER_MINUTE` | `60` | Per-client limit on the owner-token and approval-link endpoints. `0` disables it. |
 | `NEXT_PUBLIC_API_URL` / `BACKEND_URL` | `http://localhost:8000` | Where the Next.js `/api` proxy sends requests. |
+| `BACKEND_INTERNAL_HOST` | unset | Last-resort backend address for the Next.js `/api` proxy, used only when neither `NEXT_PUBLIC_API_URL` nor `BACKEND_URL` is set. A bare name such as `paypact-backend` becomes `https://paypact-backend.onrender.com`. `render.yaml` fills it from the backend service. |
 
 ### What to type
 
@@ -202,10 +207,10 @@ The agent only buys what the nine-item catalogue actually contains, so a request
 ### Test suites
 
 ```bash
-# Backend: 235 tests (policy, state machine, webhooks, API, agent, crypto, benchmark)
+# Backend: 275 tests (policy, state machine, webhooks, API, owner approval, MCP, agent, crypto, benchmark)
 cd backend && source .venv/bin/activate && pytest -q
 
-# Frontend: 63 tests, plus lint, typecheck and a production build
+# Frontend: 93 tests, plus lint, typecheck and a production build
 cd frontend && npm test && npm run lint && npm run typecheck && npm run build
 ```
 
@@ -281,6 +286,56 @@ The application provides a clean fintech interface with floating pill navigation
 
 ---
 
+## Use PayPact from any AI agent (MCP)
+
+PayPact is also a Model Context Protocol server, so an agent in Claude Desktop, or any MCP client, can request purchases under a policy you own. It talks to the same in-process coordinator as the web app, so what an agent proposes appears in the dashboard's **Agent requests** panel, labelled as coming from an outside agent.
+
+**The four tools**
+
+| Tool | What it does |
+|:---|:---|
+| `search_products(query)` | Searches the nine-item catalogue and returns a compact list (SKU, name, merchant, price). |
+| `propose_purchase(policy_id, request, agent_id)` | Runs the shopper agent and the policy gate for a policy you give it. Returns the checkout id, the decision (`ALLOW`, `REQUIRE_APPROVAL` or `REJECT`), plain-language reasons, the total and a `next_step`. |
+| `get_checkout(checkout_id)` | Returns a checkout's state, decision, amounts and any failure reason. |
+| `pay(checkout_id)` | Pays an authorized checkout. The gate re-runs first. In mock mode it returns `PAID` or the reason it was blocked; against live PayPal it returns the PayPal URL the human buyer must open. |
+
+**The guarantee.** There is no approve tool, no revoke tool and no policy-creation tool, and no tool result ever contains an owner token or an approval-link token. When a purchase needs approval, `pay` is refused until the owner approves it, either in the dashboard or through a one-time link (below). Prices always come from the catalogue, so a price written in the request text does not matter.
+
+**How the owner approves.** Registering a policy returns an `owner_token` once; only its SHA-256 hash is stored. `POST /api/checkouts/{id}/approve` and `POST /api/authorizations/{id}/revoke` need it in an `X-Owner-Token` header: a missing token returns 401, a wrong one 403, and both are written to the audit ledger as "Approval refused". The dashboard keeps the token in the browser session and sends it for you. For approving from another device, **Copy approval link** mints a one-time URL (`<FRONTEND_BASE_URL>/approve/<token>`), bound to that checkout and its proposal fingerprint, valid for 30 minutes and for a single use. Opening it shows the merchant, items, total and reasons, and an Approve button.
+
+**To try it:** register a policy in the dashboard, copy the policy id from the Agent requests panel, give it to the agent, and approve what arrives.
+
+**Hosted (streamable HTTP).** The backend mounts the server at `/mcp`. In an MCP client that supports remote servers, add the URL. For Claude Desktop, which launches local servers, bridge it with `mcp-remote`:
+
+```json
+{
+  "mcpServers": {
+    "paypact": {
+      "command": "npx",
+      "args": ["-y", "mcp-remote@0.15.1", "https://<your-backend>/mcp"]
+    }
+  }
+}
+```
+
+**Local (stdio).**
+
+```json
+{
+  "mcpServers": {
+    "paypact": {
+      "command": "/path/to/paypact/backend/.venv/bin/python",
+      "args": ["-m", "app.mcp_server"],
+      "cwd": "/path/to/paypact/backend"
+    }
+  }
+}
+```
+
+The same command from a shell is `cd backend && python -m app.mcp_server`. A stdio server is its own process with its own in-memory state. It has no policy-creation tool and no REST API, so it has no policies to propose under and nothing can approve in it. Use stdio only to inspect the tools and the catalogue. For the real propose, approve and pay flow, use the hosted `/mcp` endpoint, where the dashboard shares state. Without credentials the server runs in mock mode, like the rest of the app.
+
+---
+
 ## 8. Tools & AI Used
 
 | Tool | Role in PayPact |
@@ -295,7 +350,7 @@ The LLM only proposes. It never sees PayPal credentials and has no network path 
 - It turns the user's sentence into policy numbers, and a number is accepted only if the user actually typed it. A budget the model invents is ignored.
 - It chooses the product through tool calls. The SKU must have been returned by a tool, must satisfy the request and the agent's category, and is priced from the catalogue. Otherwise the deterministic ranking decides, and the UI shows the tool calls and any override.
 - It writes the recommendation text. That text is dropped if it cites a price or SKU that is not in the verified proposal.
-- It does not choose the product. Matching against the catalogue is deterministic and ignores merchant-written descriptions.
+- It never has the last word. The policy engine decides on the verified proposal, and catalogue matching and the fallback ranking are deterministic and ignore merchant-written descriptions.
 
 ---
 
@@ -316,7 +371,7 @@ The LLM only proposes. It never sees PayPal credentials and has no network path 
 
 - **State is in memory.** Policies, checkouts and the audit ledger reset on a restart or a free-tier sleep. The ledger is hash-chained, but nothing anchors its head outside the process.
 - **Drift is simulated.** There is no real merchant feed. The attack chips inject price drift and SKU substitution at execute time to show the gate catching it.
-- **No user accounts, so approval is a convention.** Anyone who can reach a deployment can use it, including calling the approve endpoint with any user id, and the audit tab lists the whole instance's events. Rate limits and a daily Gemini cap bound the cost. Real use would need authentication, an approval step the agent cannot call, and per-user scoping.
+- **Approval needs the owner token or a one-time link, but there are no user accounts.** The owner token is a bearer secret held in the browser session, so anyone who gets it is the owner. Whoever registers a policy owns it: an agent with raw REST access could register a policy of its own and approve against that (the MCP surface has no policy tool, so an MCP agent cannot). Approval links are shown in the dashboard to be copied, not emailed or pushed anywhere. The `/mcp` endpoint has no authentication of its own, and the audit tab still lists the whole instance's events. Rate limits and a daily Gemini cap bound the cost. Real use would need authentication, per-user scoping and delivery of approval requests to the owner out of band.
 - **The model chooses what to propose, not what is allowed.** With `GEMINI_API_KEY` set, Gemini picks the product through function calls (`search_products`, `get_product`, `choose_product`). Its pick is accepted only if it is a SKU a tool returned and it satisfies the request and the agent's category; it is priced from the catalogue, and the deterministic policy gate then approves or blocks it. Without a key, or if Gemini fails or is overruled, a deterministic ranking picks instead. Intent parsing is still a single Gemini call with a regex fallback. This loop is tested against a scripted fake Gemini; it has not yet been run against the live API.
 - **A capture whose amount differs from the approval is flagged, not refunded.** The checkout is marked failed with a ledger entry and the capture id, and needs manual review in PayPal.
 - **Receipts use HMAC.** They are tamper-evident to the server that holds the key, not independently verifiable. Receipts do not carry a key ID, so rotating `APIL_SIGNING_SECRET` invalidates old ones.
@@ -333,6 +388,7 @@ The LLM only proposes. It never sees PayPal credentials and has no network path 
 - **Demo Walkthrough Video (target 2:45, hard limit 3:00):**
   1. *0:00 - 0:20:* The problem: an agent can pay for something different from what the user approved.
   2. *0:20 - 1:00:* Type a goal, show the parsed policy and a verified proposal, approve it, and pay in the PayPal sandbox popup (live mode) to a signed receipt.
+  2b. *Optional, about 20 s:* An outside agent connected over MCP proposes a purchase and its `pay` call is refused; the request appears in Agent requests, the owner opens the one-time approval link, approves, and `pay` then succeeds. A request to approve without the owner token is refused and shows in the Audit Trail.
   3. *1:00 - 1:50:* Click the Stealth Shipping Drift and Rogue SKU Swap chips; each ends in a block before PayPal is called. Then the Prompt Injection chip, which is refused with a reason.
   4. *1:50 - 2:20:* Audit Trail: hash-chained timeline, then drop in a receipt and use the tamper simulation to show the signature fail.
   5. *2:20 - 2:45:* Policy Test Lab (described honestly as scripted regression scenarios), then the repository and the deployed app.

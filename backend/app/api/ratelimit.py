@@ -38,7 +38,16 @@ class SlidingWindowLimiter:
             )
         hits.append(now)
         if len(self._hits) > _MAX_TRACKED_CLIENTS:
-            for key in [k for k, v in self._hits.items() if not v][:1000]:
+            self._evict(now)
+
+    def _evict(self, now: float) -> None:
+        # A client whose newest hit is outside the window has nothing left to limit.
+        for key in [k for k, v in self._hits.items() if not v or now - v[-1] > self._window]:
+            del self._hits[key]
+        # Still over the cap: every client is active, so drop the least recently seen.
+        excess = len(self._hits) - _MAX_TRACKED_CLIENTS
+        if excess > 0:
+            for key in sorted(self._hits, key=lambda k: self._hits[k][-1])[:excess]:
                 del self._hits[key]
 
 
@@ -52,6 +61,22 @@ def _env_limit() -> int:
 llm_limiter = SlidingWindowLimiter(_env_limit)
 
 
+def _token_env_limit() -> int:
+    try:
+        return int(os.getenv("TOKEN_RATE_LIMIT_PER_MINUTE", "60"))
+    except ValueError:
+        return 60
+
+
+# Owner-token and approval-link endpoints: bounds guessing and audit-ledger spam.
+token_limiter = SlidingWindowLimiter(_token_env_limit)
+
+
 async def llm_rate_limit(request: Request) -> None:
     client = request.client.host if request.client else "unknown"
     llm_limiter.check(client)
+
+
+async def token_rate_limit(request: Request) -> None:
+    client = request.client.host if request.client else "unknown"
+    token_limiter.check(client)

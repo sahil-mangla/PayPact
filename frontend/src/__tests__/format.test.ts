@@ -1,11 +1,27 @@
 import { describe, expect, it } from 'vitest';
-import { formatTimestamp, humanizeEvent } from '../lib/format';
+import { describeApprovalVia, formatTimestamp, humanizeEvent } from '../lib/format';
 
 describe('humanizeEvent', () => {
   it('turns ledger codes into readable labels', () => {
     expect(humanizeEvent('PROPOSAL_CREATED')).toBe('Proposal created');
     expect(humanizeEvent('PRE_EXECUTION_BLOCKED')).toBe('Pre-execution blocked');
     expect(humanizeEvent('PAYMENT_COMPLETED')).toBe('Payment completed');
+  });
+
+  it('labels refused approvals and approval links in plain words', () => {
+    // Also used for used or expired links, so the label must not claim "not the owner".
+    expect(humanizeEvent('APPROVAL_DENIED')).toBe('Approval refused');
+    expect(humanizeEvent('APPROVAL_LINK_CREATED')).toBe('Approval link created');
+    expect(humanizeEvent('PAYMENT_REFUSED')).toBe('Payment refused: not approved yet');
+  });
+});
+
+describe('describeApprovalVia', () => {
+  it('names how an approval was given', () => {
+    expect(describeApprovalVia('owner_token')).toBe('Approved using the owner token');
+    expect(describeApprovalVia('approval_link')).toBe('Approved using a one-time approval link');
+    expect(describeApprovalVia(undefined)).toBeNull();
+    expect(describeApprovalVia('something_else')).toBeNull();
   });
 });
 

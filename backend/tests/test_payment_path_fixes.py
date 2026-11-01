@@ -18,6 +18,8 @@ async def _new_checkout(client: AsyncClient, policy_prompt: str) -> str:
         "/api/authorizations/parse-intent", json={"prompt": policy_prompt}
     )
     policy = (await client.post("/api/authorizations", json=intent.json())).json()
+    # Approve and revoke are owner-only; this client acts as the owner of the policy it registered.
+    client.headers["X-Owner-Token"] = policy["owner_token"]
     proposal = await client.post(
         "/api/proposals",
         json={
@@ -119,6 +121,20 @@ async def _checkout_with_order(prompt: str):
     session = await coordinator.create_paypal_order_only(checkout_id)
     assert session.state.value == "CHECKOUT_CREATED"
     return coordinator, session
+
+
+@pytest.mark.asyncio
+async def test_live_order_before_approval_is_refused_and_audited():
+    from app.api.routers import coordinator
+
+    async with _client() as client:
+        checkout_id = await _new_checkout(client, APPROVAL_PROMPT)
+    with pytest.raises(ValueError):
+        await coordinator.create_paypal_order_only(checkout_id)
+    refusals = coordinator.audit_ledger.get_events(
+        checkout_id=checkout_id, event_type="PAYMENT_REFUSED"
+    )
+    assert len(refusals) == 1 and refusals[0].decision == "DENIED"
 
 
 @pytest.mark.asyncio
@@ -392,8 +408,12 @@ async def test_an_existing_policy_cannot_be_overwritten_through_the_api():
                 "/api/authorizations/parse-intent", json={"prompt": AUTO_PROMPT}
             )
         ).json()
-        assert (await client.post("/api/authorizations", json=intent)).status_code == 200
-        await client.post(f"/api/authorizations/{intent['policy_id']}/revoke")
+        first = await client.post("/api/authorizations", json=intent)
+        assert first.status_code == 200
+        await client.post(
+            f"/api/authorizations/{intent['policy_id']}/revoke",
+            headers={"X-Owner-Token": first.json()["owner_token"]},
+        )
 
         again = await client.post("/api/authorizations", json=intent)
         assert again.status_code == 409
