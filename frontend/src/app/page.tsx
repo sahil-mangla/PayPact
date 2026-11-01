@@ -954,11 +954,12 @@ export default function Home() {
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'space-between',
-              gap: '10px',
+              gap: '8px 10px',
+              flexWrap: 'wrap',
               background: '#ffffff',
             }}
           >
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flex: 1, overflowX: 'auto' }}>
+            <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '6px 8px', flex: '1 1 320px', minWidth: 0 }}>
               {[
                 { step: 1, title: '1. Goal & Rules' },
                 { step: 2, title: '2. Proposal Check' },
