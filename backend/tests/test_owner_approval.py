@@ -206,6 +206,23 @@ async def test_link_base_url_comes_from_the_environment(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_link_base_url_falls_back_to_frontend_url(monkeypatch):
+    monkeypatch.delenv("FRONTEND_BASE_URL", raising=False)
+    monkeypatch.setenv("FRONTEND_URL", "https://paypact-frontend.example.com/")
+    async with _client() as client:
+        token, _, checkout_id = await _awaiting(client)
+        link_token, body = await _link(client, token, checkout_id)
+        assert body["approval_url"] == (
+            f"https://paypact-frontend.example.com/approve/{link_token}"
+        )
+
+        # FRONTEND_BASE_URL wins when both are set.
+        monkeypatch.setenv("FRONTEND_BASE_URL", "https://paypact.example.com")
+        link_token, body = await _link(client, token, checkout_id)
+        assert body["approval_url"] == f"https://paypact.example.com/approve/{link_token}"
+
+
+@pytest.mark.asyncio
 async def test_a_checkout_that_needs_no_approval_gets_no_link():
     async with _client() as client:
         token, _, checkout_id = await _awaiting(client, AUTO_PROMPT)

@@ -359,7 +359,10 @@ async def create_approval_link(
         token, expires_at = coordinator.mint_approval_link(checkout_id)
     except Exception as e:
         raise _checkout_error(e)
-    base = os.getenv("FRONTEND_BASE_URL", "http://localhost:3000").strip().rstrip("/")
+    # FRONTEND_URL is what render.yaml sets (and what the PayPal return URLs use), so fall back to it.
+    base = (
+        os.getenv("FRONTEND_BASE_URL") or os.getenv("FRONTEND_URL") or "http://localhost:3000"
+    ).strip().rstrip("/")
     return {"approval_url": f"{base}/approve/{token}", "expires_at": expires_at}
 
 
