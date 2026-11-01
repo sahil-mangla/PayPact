@@ -311,7 +311,7 @@ PayPact is also a Model Context Protocol server, so an agent in Claude Desktop, 
   "mcpServers": {
     "paypact": {
       "command": "npx",
-      "args": ["-y", "mcp-remote", "https://<your-backend>/mcp"]
+      "args": ["-y", "mcp-remote@0.15.1", "https://<your-backend>/mcp"]
     }
   }
 }
@@ -323,7 +323,7 @@ PayPact is also a Model Context Protocol server, so an agent in Claude Desktop, 
 {
   "mcpServers": {
     "paypact": {
-      "command": "python",
+      "command": "/path/to/paypact/backend/.venv/bin/python",
       "args": ["-m", "app.mcp_server"],
       "cwd": "/path/to/paypact/backend"
     }
@@ -331,7 +331,7 @@ PayPact is also a Model Context Protocol server, so an agent in Claude Desktop, 
 }
 ```
 
-The same command from a shell is `cd backend && python -m app.mcp_server`. A stdio server is its own process with its own in-memory state, so its policies and checkouts are not the web UI's. Use the hosted `/mcp` endpoint, or point both at one backend, when you want to approve in the dashboard. Without credentials the server runs in mock mode, like the rest of the app.
+The same command from a shell is `cd backend && python -m app.mcp_server`. A stdio server is its own process with its own in-memory state. It has no policy-creation tool and no REST API, so it has no policies to propose under and nothing can approve in it. Use stdio only to inspect the tools and the catalogue. For the real propose, approve and pay flow, use the hosted `/mcp` endpoint, where the dashboard shares state. Without credentials the server runs in mock mode, like the rest of the app.
 
 ---
 
