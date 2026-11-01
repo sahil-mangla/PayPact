@@ -5,7 +5,9 @@ from typing import Dict, Any, Optional
 from app.agent.requirements import (
     ProductFacts,
     parse_requirements,
+    city_name,
     shares_topic,
+    topic_overlap,
     unmet_requirements,
     verified_facts,
 )
@@ -25,7 +27,15 @@ from app.models.schemas import (
 
 
 class NoMatchingProductError(ValueError):
-    """No catalogue item satisfies the explicit requirements in the request."""
+    """No catalogue item satisfies the explicit requirements in the request.
+
+    `details` (set when the catalogue was searched) carries what was asked for and the
+    nearest item, so a client can show a structured result instead of only the message.
+    """
+
+    def __init__(self, message: str, details: Optional[Dict[str, Any]] = None):
+        super().__init__(message)
+        self.details = details
 
 
 class ShopperAgent:
@@ -48,18 +58,78 @@ class ShopperAgent:
         )
 
     @classmethod
-    def _no_match_message(cls, requirements, ranked) -> str:
-        """Explain why nothing matched, naming the closest item and what it gets wrong."""
+    def _closest(cls, requirements, user_prompt: str, ranked):
+        """The (unmet reasons, item) pair nearest to the request, or None for no candidates.
+
+        Best first: fewest unmet requirements, then an item of the kind asked for, then
+        more topic words shared with the prompt (name, category and kind only: descriptions
+        are merchant-written, so they never count), then real items before the catalogue's
+        test fixtures, then the lower price, then the sku.
+        """
         scored = [(unmet_requirements(requirements, cls._facts(p)), p) for p in ranked]
         if not scored:
+            return None
+
+        def nearness(entry):
+            reasons, p = entry
+            return (
+                len(reasons),
+                0 if p.kind in requirements.kinds else 1,
+                -topic_overlap(user_prompt, f"{p.name} {p.category} {p.kind}"),
+                "fixture" in p.name.lower(),  # test-lab items are a last resort to show a user
+                p.unit_price * requirements.quantity + p.shipping_fee + p.tax_fee,
+                p.sku,
+            )
+
+        return min(scored, key=nearness)
+
+    @classmethod
+    def _no_match_message(cls, requirements, user_prompt: str, ranked) -> str:
+        """Explain why nothing matched, naming the closest item and what it gets wrong."""
+        nearest = cls._closest(requirements, user_prompt, ranked)
+        if not nearest:
             return "No products found matching purchase intent in catalogue."
-        reasons, closest = min(scored, key=lambda x: len(x[0]))
+        reasons, closest = nearest
         reasons = reasons or ["nothing in the catalogue relates to what you asked for"]
         return (
             "No catalogue item matches this request, so nothing was proposed. "
             f"Closest option: {closest.name} from {closest.merchant}, which does not match "
             f"because {'; '.join(reasons)}."
         )
+
+    @classmethod
+    def _no_match_details(cls, requirements, user_prompt: str, ranked) -> Dict[str, Any]:
+        """Structured twin of the no-match message: what was asked and the nearest item."""
+        requested: Dict[str, Any] = {}
+        if len(requirements.kinds) == 1:
+            requested["kind"] = next(iter(requirements.kinds))
+        if requirements.origin:
+            requested["origin"] = city_name(requirements.origin)
+        if requirements.destination:
+            requested["destination"] = city_name(requirements.destination)
+        if requirements.travel_class:
+            requested["travel_class"] = requirements.travel_class
+        if requirements.quantity > 1:
+            requested["quantity"] = requirements.quantity
+        if requirements.round_trip:
+            requested["round_trip"] = True
+        if requirements.airline:
+            requested["airline"] = requirements.airline.title()
+
+        nearest = cls._closest(requirements, user_prompt, ranked)
+        closest = None
+        if nearest:
+            reasons, item = nearest
+            closest = {
+                "sku": item.sku,
+                "name": item.name,
+                "merchant": item.merchant,
+                "unit_price": item.unit_price,
+                "currency": item.currency,
+                "differences": reasons
+                or ["nothing in the catalogue relates to what you asked for"],
+            }
+        return {"requested": requested, "closest": closest}
 
     @staticmethod
     def _mentions(text: str, words: list) -> bool:
@@ -428,7 +498,8 @@ class ShopperAgent:
 
             if not target_product:
                 raise NoMatchingProductError(
-                    cls._no_match_message(requirements, ranked)
+                    cls._no_match_message(requirements, user_prompt, ranked),
+                    details=cls._no_match_details(requirements, user_prompt, ranked),
                 )
 
         # Catalogue prices are in the product's own currency, and the policy limits are in the

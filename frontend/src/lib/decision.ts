@@ -2,7 +2,7 @@
 
 export type DecisionTone = 'ok' | 'wait' | 'approved' | 'blocked';
 
-function money(amount: number, currency: string): string {
+export function money(amount: number, currency: string): string {
   const symbol = currency === 'USD' ? '$' : currency === 'INR' ? '₹' : `${currency} `;
   return `${symbol}${amount.toLocaleString('en-US')}`;
 }

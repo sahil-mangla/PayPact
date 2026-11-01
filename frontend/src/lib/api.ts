@@ -95,6 +95,65 @@ export async function errorMessage(res: Response, fallback: string): Promise<str
   return fallback;
 }
 
+/** What a request asked for and the nearest catalogue item, sent with a "no match" refusal. */
+export interface NoMatchInfo {
+  requested: {
+    kind?: string;
+    origin?: string;
+    destination?: string;
+    travel_class?: string;
+    quantity?: number;
+    round_trip?: boolean;
+    airline?: string;
+  };
+  closest: {
+    sku: string;
+    name: string;
+    merchant: string;
+    unit_price: number;
+    currency: string;
+    differences: string[];
+  } | null;
+}
+
+/** An Error whose message is the server's reason; `noMatch` is set for a catalogue no-match. */
+export class ApiError extends Error {
+  noMatch?: NoMatchInfo;
+}
+
+function parseNoMatch(value: any): NoMatchInfo | undefined {
+  if (!value || typeof value !== 'object' || !value.requested || typeof value.requested !== 'object') {
+    return undefined;
+  }
+  const c = value.closest;
+  const closest =
+    c && typeof c === 'object' && typeof c.name === 'string'
+      ? {
+          sku: String(c.sku ?? ''),
+          name: c.name,
+          merchant: String(c.merchant ?? ''),
+          unit_price: Number(c.unit_price) || 0,
+          currency: String(c.currency ?? 'INR'),
+          differences: Array.isArray(c.differences) ? c.differences.filter((d: unknown) => typeof d === 'string') : [],
+        }
+      : null;
+  return { requested: value.requested, closest };
+}
+
+/** The Error for a failed /proposals call: the usual message, plus `noMatch` when the server sent one. */
+export async function proposalError(res: Response, fallback: string): Promise<ApiError> {
+  let noMatch: NoMatchInfo | undefined;
+  try {
+    const copy = typeof res.clone === 'function' ? res.clone() : res;
+    noMatch = parseNoMatch((await copy.json())?.no_match);
+  } catch (_) {
+    noMatch = undefined;
+  }
+  const err = new ApiError(await errorMessage(res, fallback));
+  if (noMatch) err.noMatch = noMatch;
+  return err;
+}
+
 /**
  * A capture call can succeed over HTTP while the backend refuses the payment (for example the
  * policy was revoked while the PayPal window was open). Only a PAID session is a success.

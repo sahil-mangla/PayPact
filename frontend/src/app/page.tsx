@@ -47,11 +47,14 @@ import {
   getApiBaseUrl,
   isConnectionProblem,
   loadOwnerToken,
+  NoMatchInfo,
+  proposalError,
   revokePolicyRequest,
   saveOwnerToken,
 } from '../lib/api';
 import { ApprovalLinkButton } from '../components/ApprovalLinkButton';
 import { AgentRequestsPanel } from '../components/AgentRequestsPanel';
+import { NoMatchResult } from '../components/NoMatchResult';
 import { decisionBadge, decisionSummary } from '../lib/decision';
 import { describeApprovalVia, formatTimestamp, humanizeEvent } from '../lib/format';
 
@@ -173,6 +176,7 @@ export default function Home() {
   // The request a proposal was matched to, and why a request got no proposal (the toast is brief)
   const [proposalPrompt, setProposalPrompt] = useState<string>('');
   const [refusalReason, setRefusalReason] = useState<string | null>(null);
+  const [noMatch, setNoMatch] = useState<NoMatchInfo | null>(null);
   const [checkoutSession, setCheckoutSession] = useState<any>(null);
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -416,6 +420,7 @@ export default function Home() {
     setLoading(true);
     setErrorMsg(null);
     setRefusalReason(null);
+    setNoMatch(null);
     setProposalRes(null);
     setCheckoutSession(null);
     setPolicy(null);
@@ -474,7 +479,7 @@ export default function Home() {
         body: JSON.stringify({ prompt: activePrompt, policy_id: policyId, agent_id: activeAgent }),
       });
       if (!propRes.ok) {
-        throw new Error(await errorMessage(propRes, 'Could not generate item proposal'));
+        throw await proposalError(propRes, 'Could not generate item proposal');
       }
       const data = await propRes.json();
       if (!data?.proposal || !data?.checkout_id) {
@@ -490,7 +495,11 @@ export default function Home() {
       }
       return data;
     } catch (err: any) {
-      setErrorMsg(err.message);
+      // A catalogue no-match is shown in full in the result panel, so it gets no toast too
+      if (err.noMatch) {
+        setNoMatch(err.noMatch);
+        setPipelineStep(2); // no rule ran: the proposal step is what found nothing
+      } else setErrorMsg(err.message);
       setRefusalReason(err.message);
       setPipelineBlocked(true);
       return null;
@@ -560,10 +569,10 @@ export default function Home() {
   // On a phone the result column sits below the form, so bring a new result into view.
   const resultColumnRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
-    if (!proposalRes && !checkoutSession) return;
+    if (!proposalRes && !checkoutSession && !noMatch) return;
     if (typeof window === 'undefined' || window.innerWidth >= 900) return;
     resultColumnRef.current?.scrollIntoView?.({ behavior: 'smooth', block: 'start' });
-  }, [proposalRes?.checkout_id, checkoutSession?.state]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [proposalRes?.checkout_id, checkoutSession?.state, noMatch]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const receiptDialogRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
@@ -1041,7 +1050,7 @@ export default function Home() {
               ) : !healthStatus ? (
                 <span className="badge badge-approval" style={{ fontSize: '0.75rem', padding: '2px 8px' }}>Server offline</span>
               ) : pipelineBlocked && activeTab === 'agent' ? (
-                <span className="badge badge-reject" style={{ fontSize: '0.75rem', padding: '2px 8px' }}>Blocked by Rule</span>
+                <span className="badge badge-reject" style={{ fontSize: '0.75rem', padding: '2px 8px' }}>{noMatch ? 'No match' : 'Blocked by Rule'}</span>
               ) : (
                 <span className="badge badge-allow" style={{ fontSize: '0.75rem', padding: '2px 8px' }}>System Ready</span>
               )}
@@ -1580,7 +1589,9 @@ export default function Home() {
 
               {/* ─── Right Column: Proposal & Checkout ─── */}
               <div ref={resultColumnRef} style={{ display: 'flex', flexDirection: 'column', gap: '10px', scrollMarginTop: '12px' }}>
-                {!proposalRes ? (
+                {!proposalRes && noMatch && !loading ? (
+                  <NoMatchResult info={noMatch} />
+                ) : !proposalRes ? (
                   <div className="clean-card" style={{ padding: '40px 18px', textAlign: 'center', color: '#526077', minHeight: '380px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
                     <CreditCard size={36} strokeWidth={1.3} style={{ margin: '0 auto 10px', color: '#cbd5e1' }} />
                     <h3 style={{ fontSize: '0.96rem', color: '#0f172a', marginBottom: '4px' }}>

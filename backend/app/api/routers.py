@@ -5,9 +5,10 @@ import time
 from typing import Any, Dict, List, Literal, Optional
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from fastapi.concurrency import run_in_threadpool
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-from app.agent.shopper_agent import ShopperAgent
+from app.agent.shopper_agent import NoMatchingProductError, ShopperAgent
 from app.api.ratelimit import llm_rate_limit, token_rate_limit
 from app.catalogue.products import CATALOGUE, Product
 from app.lab.benchmark import (
@@ -275,6 +276,18 @@ async def revoke_policy(
 # ----------------------------------------------------
 # 3. Agent Proposals & Checkout Lifecycle
 # ----------------------------------------------------
+class NoMatchHTTPException(HTTPException):
+    """The 400 for a request nothing in the catalogue satisfies.
+
+    Still an HTTPException with a plain-string detail (the MCP tool reports that), plus
+    the structured `no_match` that POST /api/proposals adds to its response body.
+    """
+
+    def __init__(self, detail: str, no_match: Optional[Dict[str, Any]] = None):
+        super().__init__(status_code=400, detail=detail)
+        self.no_match = no_match
+
+
 async def run_proposal(
     prompt: str,
     policy_id: str,
@@ -298,6 +311,8 @@ async def run_proposal(
             preferred_sku=preferred_sku,
             agent_id=agent_id,
         )
+    except NoMatchingProductError as e:
+        raise NoMatchHTTPException(str(e), e.details)
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -318,9 +333,16 @@ async def run_proposal(
 
 @router.post("/proposals", dependencies=[Depends(llm_rate_limit)])
 async def create_proposal(req: CreateProposalRequest):
-    return await run_proposal(
-        req.prompt, req.policy_id, preferred_sku=req.preferred_sku, agent_id=req.agent_id
-    )
+    try:
+        return await run_proposal(
+            req.prompt, req.policy_id, preferred_sku=req.preferred_sku, agent_id=req.agent_id
+        )
+    except NoMatchHTTPException as e:
+        if not e.no_match:
+            raise
+        return JSONResponse(
+            status_code=400, content={"detail": e.detail, "no_match": e.no_match}
+        )
 
 
 @router.post(

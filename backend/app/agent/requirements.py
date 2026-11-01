@@ -270,12 +270,8 @@ _GENERIC = {
 }  # fmt: skip
 
 
-def shares_topic(prompt: str, item_text: str) -> bool:
-    """True if the prompt names at least one thing the item text also names.
-
-    Used only when the prompt names no product type we recognise, so that something
-    like "buy me a yacht" cannot be satisfied by an arbitrary catalogue item.
-    """
+def topic_overlap(prompt: str, item_text: str) -> int:
+    """How many distinct topic words the prompt and the item text have in common."""
 
     def words(text: str) -> Set[str]:
         return {
@@ -284,7 +280,16 @@ def shares_topic(prompt: str, item_text: str) -> bool:
             if w not in _GENERIC and w.rstrip("s") not in _GENERIC
         }
 
-    return bool(words(prompt) & words(item_text))
+    return len(words(prompt) & words(item_text))
+
+
+def shares_topic(prompt: str, item_text: str) -> bool:
+    """True if the prompt names at least one thing the item text also names.
+
+    Used only when the prompt names no product type we recognise, so that something
+    like "buy me a yacht" cannot be satisfied by an arbitrary catalogue item.
+    """
+    return topic_overlap(prompt, item_text) > 0
 
 
 def unmet_requirements(req: Requirements, item: ProductFacts) -> List[str]:

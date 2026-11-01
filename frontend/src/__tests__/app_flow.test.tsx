@@ -1,5 +1,5 @@
 import React from 'react';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import Home from '../app/page';
 
@@ -353,6 +353,73 @@ describe('Honest status when things go wrong', () => {
     expect(screen.getByText('Prompt Injection Bypass')).toBeInTheDocument();
     fireEvent.click(screen.getByText('Prompt Injection Bypass'));
     expect(await screen.findByText(/isn't in the catalogue|not in the catalogue/i)).toBeInTheDocument();
+  });
+});
+
+describe('A request nothing in the catalogue matches', () => {
+  const NO_MATCH_MESSAGE =
+    'No catalogue item matches this request, so nothing was proposed. Closest option: IndiGo Flight 6E-204 from IndiGo Corporate, which does not match because it flies to Bengaluru, not Singapore.';
+
+  function mockProposalRefusal(body: any) {
+    localStorage.clear();
+    global.fetch = vi.fn().mockImplementation((url: string) => {
+      const json = (b: any) => Promise.resolve({ ok: true, json: () => Promise.resolve(b) });
+      if (url.includes('/health')) return json({ status: 'healthy', paypal_mode: 'mock', ollama: {} });
+      if (url.includes('/proposals')) return Promise.resolve(new Response(JSON.stringify(body), { status: 400 }));
+      if (url.includes('/authorizations')) return json(MOCK_POLICY);
+      return json([]);
+    }) as any;
+  }
+
+  it('shows a structured result in the panel and no duplicate toast', async () => {
+    mockProposalRefusal({
+      detail: NO_MATCH_MESSAGE,
+      no_match: {
+        requested: { kind: 'flight', destination: 'Singapore', travel_class: 'economy' },
+        closest: {
+          sku: 'TR-FLIGHT-BLR',
+          name: 'IndiGo Flight 6E-204 (DEL -> BLR Economy Flight Ticket)',
+          merchant: 'IndiGo Corporate',
+          unit_price: 4299,
+          currency: 'INR',
+          differences: ['it flies to Bengaluru, not Singapore'],
+        },
+      },
+    });
+    render(<Home />);
+    fireEvent.click(screen.getByText('Generate Proposal & Check Rules'));
+
+    const panel = await screen.findByTestId('no-match-result');
+    expect(panel).toHaveAttribute('role', 'status');
+    expect(screen.getByRole('heading', { name: 'No matching item' })).toBeInTheDocument();
+    expect(screen.getByText('Nothing was proposed and nothing was charged.')).toBeInTheDocument();
+    for (const chip of ['Economy', 'Flight', 'To Singapore']) {
+      expect(screen.getByText(chip, { selector: 'li' })).toBeInTheDocument();
+    }
+    expect(screen.getByText('Closest in the catalogue')).toBeInTheDocument();
+    expect(screen.getByText(/IndiGo Flight 6E-204/)).toBeInTheDocument();
+    expect(screen.getByText(/IndiGo Corporate · ₹4,299/)).toBeInTheDocument();
+    expect(screen.getByText('What differs')).toBeInTheDocument();
+    expect(screen.getByText('it flies to Bengaluru, not Singapore')).toBeInTheDocument();
+    expect(screen.getByText(/Change the request \(for example the destination\)/)).toBeInTheDocument();
+    expect(within(panel).queryByRole('button')).not.toBeInTheDocument();
+    // The refusal is not repeated as a toast or as the old grey paragraph
+    expect(screen.queryByText('Security & Policy Notice')).not.toBeInTheDocument();
+    expect(screen.queryByText(NO_MATCH_MESSAGE)).not.toBeInTheDocument();
+    // Nothing was blocked by a rule, so the header says so
+    expect(screen.getByText('No match')).toBeInTheDocument();
+    expect(screen.queryByText('Blocked by Rule')).not.toBeInTheDocument();
+  });
+
+  it('keeps the toast and plain panel when the 400 has no structured data', async () => {
+    mockProposalRefusal({ detail: NO_MATCH_MESSAGE });
+    render(<Home />);
+    fireEvent.click(screen.getByText('Generate Proposal & Check Rules'));
+
+    expect(await screen.findByText('Security & Policy Notice')).toBeInTheDocument();
+    expect(screen.queryByTestId('no-match-result')).not.toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'No matching item' })).toBeInTheDocument();
+    expect(screen.getAllByText(NO_MATCH_MESSAGE).length).toBeGreaterThan(0);
   });
 });
 
