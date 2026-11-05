@@ -4,7 +4,7 @@ export type DecisionTone = 'ok' | 'wait' | 'approved' | 'blocked';
 
 export function money(amount: number, currency: string): string {
   const symbol = currency === 'USD' ? '$' : currency === 'INR' ? '₹' : `${currency} `;
-  return `${symbol}${amount.toLocaleString('en-US')}`;
+  return `${symbol}${amount.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`;
 }
 
 export function decisionSummary(input: {

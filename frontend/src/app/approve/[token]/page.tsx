@@ -4,6 +4,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { CheckCircle2, ShieldAlert, ShieldCheck } from 'lucide-react';
 
 import { apiFetch, errorMessage, isConnectionProblem } from '../../../lib/api';
+import { money } from '../../../lib/decision';
 import { formatTimestamp } from '../../../lib/format';
 
 interface ApprovalSummary {
@@ -28,11 +29,6 @@ type View =
   | { kind: 'approving'; summary: ApprovalSummary }
   | { kind: 'approved'; summary: ApprovalSummary }
   | { kind: 'problem'; title: string; message: string; retry?: boolean };
-
-function money(amount: number, currency: string): string {
-  const symbol = currency === 'USD' ? '$' : currency === 'INR' ? '₹' : `${currency} `;
-  return `${symbol}${amount.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`;
-}
 
 /** Turn a failed response into a plain-words problem the owner can act on. */
 async function problemFrom(res: Response): Promise<View> {
