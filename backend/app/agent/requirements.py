@@ -44,7 +44,9 @@ _KNOWN_CITY = "|".join(sorted(map(re.escape, _ALIAS_TO_CODE), key=len, reverse=T
 _NOT_A_PLACE = (
     r"the|a|an|my|me|be|get|see|do|buy|book|find|go|your|our|this|that|it|reach|"
     r"avoid|work|travel|fly|under|within|below|for|with|and|or|on|in|at|by|via|"
-    r"economy|business|premium|first|class|coach|cheap|budget|total|just|only|any|some"
+    r"economy|business|premium|first|class|coach|cheap|cheapest|cheaper|lowest|best|"
+    r"affordable|budget|total|just|only|any|some|most|least|minimum|maximum|price|cost|"
+    r"rate|fare|time|once"
 )
 _CITY = rf"(?:{_KNOWN_CITY}|(?!(?:{_NOT_A_PLACE})\b)[a-z]{{3,}})"
 
@@ -93,7 +95,12 @@ _AIRLINES = {
 
 _CLASSES = [
     ("premium economy", r"\bpremium[ -]economy\b"),
-    ("business", r"\bbusiness(?:[ -]class)?\b"),
+    # "business trip" is the purpose of the journey, not the cabin
+    (
+        "business",
+        r"\bbusiness[ -](?:class|cabin|seats?|fares?)\b"
+        r"|\b(?:in|fly|flying|flies)\s+business\b(?!\s+(?:trip|travel|meeting|conference|purposes?))",
+    ),
     ("first", r"\bfirst[ -]class\b"),
     ("economy", r"\b(?:economy|coach)\b"),
 ]
@@ -238,7 +245,11 @@ def parse_requirements(prompt: str) -> Requirements:
             req.travel_class = name
             break
     req.round_trip = bool(
-        re.search(r"\b(?:round[ -]?trip|two[ -]way|return)\b", p)
+        re.search(
+            r"\b(?:round[ -]?trip|two[ -]way|return\s+(?:flights?|tickets?|trips?|fares?|journey)"
+            r"|(?:and|&|with(?:\s+a)?)\s+return)\b",
+            p,
+        )
     ) and not re.search(r"\bone[ -]way\b", p)
     for name, aliases in _AIRLINES.items():
         if any(re.search(rf"\b{re.escape(a)}\b", p) for a in aliases):

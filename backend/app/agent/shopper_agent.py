@@ -423,8 +423,13 @@ class ShopperAgent:
         """Propose a product matching user intent within authorized category."""
         target_product: Optional[Product] = None
 
+        requirements = parse_requirements(user_prompt)
         if preferred_sku:
             target_product = get_product_by_sku(preferred_sku)
+            # A client-chosen SKU still has to satisfy what the request asks for (kind, route,
+            # class, quantity cap); otherwise the search below decides.
+            if target_product and unmet_requirements(requirements, cls._facts(target_product)):
+                target_product = None
 
         # Map agent persona to its designated operational domain
         agent_category_map = {
@@ -436,7 +441,6 @@ class ShopperAgent:
             agent_category_map.get(agent_id or "") or policy.product_category
         )
 
-        requirements = parse_requirements(user_prompt)
         agent_choice = None
         agent_trace: list = []
 
@@ -462,7 +466,8 @@ class ShopperAgent:
             # matches above, so it cannot pick something the request or persona rules out.
             from app.agent.tool_agent import choose_product
 
-            picked = choose_product(user_prompt, policy)
+            # No genuine match means the pick would be discarded, so skip the billable calls.
+            picked = choose_product(user_prompt, policy) if candidates else None
             if picked:
                 agent_trace = list(picked.trace)
                 match = next((c for c in candidates if c.sku == picked.sku), None)

@@ -160,7 +160,7 @@ def build_mcp_server() -> FastMCP:
         query: Annotated[str, Field(min_length=2, max_length=200, description="What to look for, e.g. 'wireless mechanical keyboard'")],
     ) -> Dict[str, Any]:
         """Search the merchant catalogue. Returns a compact list of products with their real prices."""
-        products = search_catalogue(query, max_results=5)
+        products = search_catalogue(query, max_results=5, fallback=False)
         return {
             "count": len(products),
             "products": [

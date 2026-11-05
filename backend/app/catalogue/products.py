@@ -166,7 +166,10 @@ def get_product_by_sku(sku: str) -> Optional[Product]:
 
 
 def search_catalogue(
-    query: str, category_filter: Optional[str] = None, max_results: int = 5
+    query: str,
+    category_filter: Optional[str] = None,
+    max_results: int = 5,
+    fallback: bool = True,
 ) -> List[Product]:
     import re
 
@@ -273,4 +276,5 @@ def search_catalogue(
         if cat_matches:
             return cat_matches[:max_results]
 
-    return CATALOGUE[:max_results]
+    # Callers that present results as matches pass fallback=False so "nothing found" stays empty.
+    return CATALOGUE[:max_results] if fallback else []

@@ -71,6 +71,13 @@ async def test_search_products_lists_catalogue_prices():
     assert k2["price"] == 3899.0
 
 
+@pytest.mark.asyncio
+async def test_search_products_returns_nothing_when_nothing_matches():
+    async with _mcp() as session:
+        found = await _call(session, "search_products", query="zzzzzz submarine")
+    assert found == {"count": 0, "products": []}
+
+
 async def test_full_flow_propose_wait_for_owner_then_pay():
     policy_id, owner_token = await _register(APPROVAL_PROMPT)
     async with _mcp() as session:

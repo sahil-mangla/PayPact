@@ -137,3 +137,13 @@ async def test_webhook_null_amount_resilience():
     )
     assert updated is not None
     assert updated.state == TransactionState.REFUNDED
+
+
+def test_a_preferred_sku_cannot_bypass_the_request_requirements():
+    from app.agent.shopper_agent import NoMatchingProductError
+
+    policy = ShopperAgent.parse_intent_to_policy("Flights under 50000")
+    with pytest.raises(NoMatchingProductError):
+        ShopperAgent.generate_proposal(
+            "flight to Goa, 50 tickets", policy, preferred_sku="TR-FLIGHT-BLR"
+        )

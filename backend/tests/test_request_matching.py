@@ -609,3 +609,20 @@ def test_automatic_wording_does_not_shrink_the_hardware_agents_quota():
     )
     assert policy.product_category == "mechanical keyboard"
     assert policy.agent_quotas["agent_hardware"].allocated_budget == policy.maximum_total
+
+
+def test_business_trip_is_not_a_business_class_request():
+    from app.agent.requirements import parse_requirements
+
+    assert parse_requirements("Book a flight to Bangalore for my business trip").travel_class is None
+    assert parse_requirements("flight to Delhi in business class").travel_class == "business"
+    assert parse_requirements("fly business to Delhi").travel_class == "business"
+
+
+def test_cheapest_is_not_a_destination_and_return_the_favour_is_not_a_round_trip():
+    from app.agent.requirements import parse_requirements
+
+    assert parse_requirements("flight at cheapest price to Goa").destination == "GOI"
+    assert not parse_requirements("I'll return the favour, book a flight").round_trip
+    assert parse_requirements("book a return flight to Goa").round_trip
+    assert parse_requirements("flight to Goa and return").round_trip
