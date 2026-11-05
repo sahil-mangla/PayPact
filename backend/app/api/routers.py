@@ -9,7 +9,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from app.agent.shopper_agent import NoMatchingProductError, ShopperAgent
-from app.api.ratelimit import llm_rate_limit, token_rate_limit
+from app.api.ratelimit import llm_rate_limit, poll_rate_limit, token_rate_limit
 from app.catalogue.products import CATALOGUE, Product
 from app.lab.benchmark import (
     IntegrityLab,
@@ -241,7 +241,7 @@ async def get_policy(policy_id: str):
 
 
 @router.get(
-    "/authorizations/{policy_id}/checkouts", dependencies=[Depends(token_rate_limit)]
+    "/authorizations/{policy_id}/checkouts", dependencies=[Depends(poll_rate_limit)]
 )
 async def list_policy_checkouts(
     policy_id: str,
@@ -412,6 +412,13 @@ async def redeem_approval_link(token: str):
         raise _checkout_error(e)
 
 
+def _simulation_allowed() -> bool:
+    """Demo fault injection (drift, timeout, fabricated webhooks) never runs against live PayPal by default."""
+    return coordinator.paypal_client.mock_mode or os.getenv(
+        "ENABLE_WEBHOOK_SIMULATION", ""
+    ).lower() in ("true", "1", "yes")
+
+
 async def run_execute(checkout_id: str, req: ExecutePaymentRequest) -> Dict[str, Any]:
     """
     Execute step 1: Runs pre-execution invariant gate, creates PayPal order.
@@ -421,6 +428,11 @@ async def run_execute(checkout_id: str, req: ExecutePaymentRequest) -> Dict[str,
 
     For drift/rejection scenarios, blocks immediately without creating an order.
     """
+    if req.simulate_drift_type and not _simulation_allowed():
+        raise HTTPException(
+            status_code=403,
+            detail="Fault injection is disabled against live PayPal (set ENABLE_WEBHOOK_SIMULATION=true for a demo).",
+        )
     session = coordinator.get_session(checkout_id)
     if not session:
         raise HTTPException(
@@ -637,10 +649,7 @@ async def simulate_paypal_webhook(req: SimulateWebhookRequest):
 
     It fabricates PayPal events, so it only runs in mock mode unless explicitly enabled.
     """
-    if not (
-        coordinator.paypal_client.mock_mode
-        or os.getenv("ENABLE_WEBHOOK_SIMULATION", "").lower() in ("true", "1", "yes")
-    ):
+    if not _simulation_allowed():
         raise HTTPException(
             status_code=403,
             detail="Webhook simulation is disabled against live PayPal (set ENABLE_WEBHOOK_SIMULATION=true for a demo).",
@@ -652,11 +661,22 @@ async def simulate_paypal_webhook(req: SimulateWebhookRequest):
         )
 
     refund_amount = req.amount or session.proposal.total_amount
+    # PayPal reports a refund in the currency it charged, which differs from the proposal's
+    # currency in the live sandbox (INR proposals are charged in USD). Express the simulated
+    # refund the same way, as the same fraction of the charge.
+    charge_currency, charge_total = coordinator.paypal_client.expected_charge(
+        session.proposal
+    )
+    charge_refund = (
+        round(refund_amount / session.proposal.total_amount * charge_total, 2)
+        if session.proposal.total_amount > 0
+        else refund_amount
+    )
     simulated_resource = {
         "id": session.paypal_capture_id or f"SIM-CAP-{req.checkout_id}",
         "amount": {
-            "value": f"{refund_amount:.2f}",
-            "currency_code": session.proposal.currency,
+            "value": f"{charge_refund:.2f}",
+            "currency_code": charge_currency,
         },
     }
     updated = await coordinator.process_webhook_event(

@@ -192,11 +192,13 @@ The sandbox does not support INR, so INR amounts are converted to USD at a fixed
 | `GEMINI_API_KEY` | unset | Enables Gemini for intent parsing and for choosing the product through function calls. |
 | `GEMINI_DAILY_CALL_LIMIT` | `500` | Daily cap on Gemini calls; past it the app falls back to local or deterministic parsing. `0` disables the cap. |
 | `LLM_RATE_LIMIT_PER_MINUTE` | `30` | Per-client limit on the two endpoints that call an LLM. `0` disables it. |
-| `ENABLE_WEBHOOK_SIMULATION` | unset | `/api/webhooks/simulate` always works in mock mode; against live PayPal it is off unless this is `true`. |
+| `ENABLE_WEBHOOK_SIMULATION` | unset | `/api/webhooks/simulate` and the drift/timeout fault injection on `/api/checkouts/{id}/execute` always work in mock mode; against live PayPal they are off unless this is `true`. |
+| `TRUSTED_PROXY_HOPS` | `0` | Number of proxies in front of the app that append to `X-Forwarded-For`. The rate limiters use the entry that many hops from the right; `0` ignores the header and uses the socket address. `render.yaml` sets `1`. |
 | `INR_TO_USD_RATE` | `83` | INR per USD for the sandbox conversion. |
 | `CORS_ORIGINS` | localhost origins | Comma-separated allowed origins, or `*`. |
 | `FRONTEND_BASE_URL` | `http://localhost:3000` | Base URL of the web app, used to build one-time approval links (`<base>/approve/<token>`). Falls back to `FRONTEND_URL` when unset. |
 | `TOKEN_RATE_LIMIT_PER_MINUTE` | `60` | Per-client limit on the owner-token and approval-link endpoints. `0` disables it. |
+| `POLL_RATE_LIMIT_PER_MINUTE` | `240` | Per-client limit on the dashboard's checkout-list polling, kept apart from the approve/revoke limit above so open tabs cannot lock the owner out. `0` disables it. |
 | `NEXT_PUBLIC_API_URL` / `BACKEND_URL` | `http://localhost:8000` | Where the Next.js `/api` proxy sends requests. |
 | `BACKEND_INTERNAL_HOST` | unset | Last-resort backend address for the Next.js `/api` proxy, used only when neither `NEXT_PUBLIC_API_URL` nor `BACKEND_URL` is set. A bare name such as `paypact-backend` becomes `https://paypact-backend.onrender.com`. `render.yaml` fills it from the backend service. |
 

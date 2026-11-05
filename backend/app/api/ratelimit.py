@@ -72,11 +72,43 @@ def _token_env_limit() -> int:
 token_limiter = SlidingWindowLimiter(_token_env_limit)
 
 
+def client_key(request: Request) -> str:
+    """Address to rate-limit on.
+
+    X-Forwarded-For is client-controlled except for the entries our own proxies append, so it is
+    only read when TRUSTED_PROXY_HOPS says how many proxies sit in front of the app, and then only
+    the entry that many hops from the right. By default the header is ignored.
+    """
+    try:
+        hops = int(os.getenv("TRUSTED_PROXY_HOPS", "0"))
+    except ValueError:
+        hops = 0
+    if hops > 0:
+        parts = [p.strip() for p in request.headers.get("x-forwarded-for", "").split(",") if p.strip()]
+        if len(parts) >= hops:
+            return parts[-hops]
+    return request.client.host if request.client else "unknown"
+
+
+def _poll_env_limit() -> int:
+    try:
+        return int(os.getenv("POLL_RATE_LIMIT_PER_MINUTE", "240"))
+    except ValueError:
+        return 240
+
+
+# The dashboard polls the owner's checkout list; a separate bucket keeps polling from starving
+# the owner's own approve and revoke clicks, while still bounding token guessing on that route.
+poll_limiter = SlidingWindowLimiter(_poll_env_limit)
+
+
 async def llm_rate_limit(request: Request) -> None:
-    client = request.client.host if request.client else "unknown"
-    llm_limiter.check(client)
+    llm_limiter.check(client_key(request))
 
 
 async def token_rate_limit(request: Request) -> None:
-    client = request.client.host if request.client else "unknown"
-    token_limiter.check(client)
+    token_limiter.check(client_key(request))
+
+
+async def poll_rate_limit(request: Request) -> None:
+    poll_limiter.check(client_key(request))

@@ -1036,3 +1036,99 @@ async def test_the_reject_over_budget_quick_prompt_ends_in_a_policy_rejection():
             )
         ).json()
         assert proposal["state"] == "POLICY_REJECTED"
+
+
+@pytest.mark.asyncio
+async def test_fault_injection_is_refused_against_live_paypal(monkeypatch):
+    from app.api.routers import coordinator
+
+    async with _client() as client:
+        checkout_id = await _new_checkout(client, AUTO_PROMPT)
+        monkeypatch.setattr(coordinator.paypal_client, "mock_mode", False)
+        monkeypatch.delenv("ENABLE_WEBHOOK_SIMULATION", raising=False)
+        resp = await client.post(
+            f"/api/checkouts/{checkout_id}/execute",
+            json={"simulate_drift_type": "price_drift"},
+        )
+        assert resp.status_code == 403
+        assert coordinator.get_session(checkout_id).state.value == "AUTHORIZED"
+
+
+@pytest.mark.asyncio
+async def test_capture_retakes_a_lapsed_reservation_so_the_budget_cannot_be_overspent():
+    from datetime import datetime, timedelta, timezone
+
+    from app.state.machine import PENDING_RESERVATION_TTL
+
+    coordinator, first = await _checkout_with_order(AUTO_PROMPT)
+    policy = coordinator.get_policy(first.policy_id)
+    policy.maximum_total = round(first.proposal.total_amount * 1.5, 2)
+
+    # The first buyer's popup stays open past the TTL, so its hold lapses...
+    first.pending_since = datetime.now(timezone.utc) - PENDING_RESERVATION_TTL - timedelta(minutes=1)
+    # ...and a second checkout under the same policy is admitted and starts paying.
+    second = first.model_copy(deep=True)
+    second.checkout_id = "chk_second"
+    second.pending_since = datetime.now(timezone.utc)
+    coordinator._sessions[second.checkout_id] = second
+
+    result = await coordinator.capture_approved_order(first.checkout_id, first.paypal_order_id)
+
+    assert result.state.value == "POLICY_REJECTED"
+    assert "Blocked at capture" in result.failure_reason
+    assert policy.spent_total == 0
+
+
+@pytest.mark.asyncio
+async def test_capture_of_a_lapsed_reservation_still_succeeds_when_nothing_competes():
+    from datetime import datetime, timedelta, timezone
+
+    from app.state.machine import PENDING_RESERVATION_TTL
+
+    coordinator, first = await _checkout_with_order(AUTO_PROMPT)
+    first.pending_since = datetime.now(timezone.utc) - PENDING_RESERVATION_TTL - timedelta(minutes=1)
+
+    result = await coordinator.capture_approved_order(first.checkout_id, first.paypal_order_id)
+
+    assert result.state.value == "PAID", result.failure_reason
+
+
+@pytest.mark.asyncio
+async def test_simulated_refund_is_applied_when_paypal_charges_in_another_currency(monkeypatch):
+    from app.api.routers import coordinator
+
+    async with _client() as client:
+        checkout_id = await _new_checkout(client, AUTO_PROMPT)
+        await client.post(f"/api/checkouts/{checkout_id}/execute", json={})
+        session = coordinator.get_session(checkout_id)
+        assert session.state.value == "PAID"
+
+        # Live sandbox: an INR proposal is charged in USD.
+        usd_total = round(session.proposal.total_amount / 80, 2)
+        monkeypatch.setattr(
+            coordinator.paypal_client, "expected_charge", lambda proposal: ("USD", usd_total)
+        )
+        resp = await client.post(
+            "/api/webhooks/simulate", json={"checkout_id": checkout_id}
+        )
+        assert resp.status_code == 200
+        assert coordinator.get_session(checkout_id).state.value == "REFUNDED"
+
+
+@pytest.mark.asyncio
+async def test_a_refund_in_an_unexpected_currency_is_audited_not_dropped():
+    from app.api.routers import coordinator
+
+    async with _client() as client:
+        checkout_id = await _new_checkout(client, AUTO_PROMPT)
+        await client.post(f"/api/checkouts/{checkout_id}/execute", json={})
+        await coordinator.process_webhook_event(
+            event_type="PAYMENT.CAPTURE.REFUNDED",
+            resource={"amount": {"value": "5.00", "currency_code": "XYZ"}},
+            checkout_id=checkout_id,
+            summary="odd currency",
+        )
+        assert coordinator.get_session(checkout_id).state.value == "PAID"
+        assert coordinator.audit_ledger.get_events(
+            checkout_id=checkout_id, event_type="REFUND_IGNORED"
+        )
