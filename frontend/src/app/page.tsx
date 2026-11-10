@@ -163,7 +163,7 @@ export default function Home() {
 
   // Agent State
   const [prompt, setPrompt] = useState(
-    'Find a wireless mechanical keyboard suitable for programming. Maximum budget ₹5,000, auto-buy under ₹4,000.'
+    'Buy the Keychron K2 wireless mechanical keyboard. Maximum budget ₹5,000, auto-buy under ₹4,000.'
   );
   const [policy, setPolicy] = useState<any>(null);
   // Returned once when the policy is registered. It is what lets this page approve and revoke;
@@ -1251,8 +1251,8 @@ export default function Home() {
                     <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', alignItems: 'center' }}>
                       <span style={{ fontSize: '0.75rem', color: '#526077', marginRight: '2px' }}>Quick Prompts:</span>
                       {[
-                        ['Auto-buy ₹3,899 (Approved)', 'Find a wireless mechanical keyboard suitable for programming. Maximum budget ₹5,000, auto-buy under ₹4,000.'],
-                        ['Requires Manual Approval ₹4,500', 'Find premium custom mechanical keyboard under ₹5,000. Require approval above ₹4,000.'],
+                        ['Auto-buy ₹3,899 (Approved)', 'Buy the Keychron K2 wireless mechanical keyboard. Maximum budget ₹5,000, auto-buy under ₹4,000.'],
+                        ['Requires Manual Approval ₹4,699', 'Buy the Keychron Q1 Pro custom mechanical keyboard under ₹5,000. Require approval above ₹4,000.'],
                         ['Reject Over Budget', 'Search for custom brass keyboard. Budget ceiling ₹3,000.'],
                       ].map(([label, val]) => (
                         <button
@@ -1320,14 +1320,14 @@ export default function Home() {
                           {
                             label: 'Stealth Shipping Drift (+₹850)',
                             icon: FileWarning,
-                            prompt: 'Find a wireless mechanical keyboard suitable for programming. Maximum budget ₹5,000, auto-buy under ₹4,000.',
+                            prompt: 'Buy the Keychron K2 wireless mechanical keyboard. Maximum budget ₹5,000, auto-buy under ₹4,000.',
                             drift: 'price_drift' as const,
                             notice: 'Vector: Stealth Price Drift. Merchant injects +₹850 fee after approval; PayPact pre-commit hash check halts payment.',
                           },
                           {
                             label: 'Rogue Item SKU Swap',
                             icon: RefreshCw,
-                            prompt: 'Find a wireless mechanical keyboard suitable for programming. Maximum budget ₹5,000, auto-buy under ₹4,000.',
+                            prompt: 'Buy the Keychron K2 wireless mechanical keyboard. Maximum budget ₹5,000, auto-buy under ₹4,000.',
                             drift: 'sku_substitution' as const,
                             notice: 'Vector: SKU Substitution. Merchant switches approved keyboard with an unapproved SKU; PayPact detects fingerprint mismatch.',
                           },
@@ -2275,7 +2275,7 @@ export default function Home() {
                         Cryptographic Receipt Verifier & Tamper Detection
                       </h4>
                       <p style={{ fontSize: '0.75rem', color: '#526077' }}>
-                        Inspect receipt files or simulate fraud to test PayPact&apos;s non-repudiation cryptographic verification
+                        Inspect receipt files or simulate fraud to test PayPact&apos;s tamper-evident cryptographic verification
                       </p>
                     </div>
                   </div>
@@ -2465,7 +2465,7 @@ export default function Home() {
                             <CheckCheck size={17} />
                             <strong style={{ fontSize: '0.88rem' }}>Authentic Signature Verified: Zero Tampering Detected</strong>
                           </div>
-                          <span className="badge badge-allow" style={{ fontSize: '0.75rem', padding: '1px 6px' }}>Non-Repudiation Passed</span>
+                          <span className="badge badge-allow" style={{ fontSize: '0.75rem', padding: '1px 6px' }}>Tamper Check Passed</span>
                         </div>
                         <p style={{ fontSize: '0.76rem', color: '#334155', margin: '0 0 8px' }}>
                           The payload matches the immutable canonical SHA-256 digest. No fields have been altered since receipt generation.

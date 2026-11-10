@@ -90,6 +90,7 @@ class CheckoutSession(BaseModel):
     reconciliation_data: Optional[Dict] = None
     refunded_total: float = 0.0
     pending_since: Optional[datetime] = None
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 class TransactionCoordinator:
@@ -116,16 +117,10 @@ class TransactionCoordinator:
             self._execution_locks[checkout_id] = asyncio.Lock()
         return self._execution_locks[checkout_id]
 
-    def _reserve_budget(
-        self, session: CheckoutSession, policy: AuthorizationPolicy
+    def _budget_shortfall(
+        self, session: CheckoutSession, policy: AuthorizationPolicy, now: datetime
     ) -> Optional[str]:
-        """Reserve this checkout's amount, or return why the budget cannot cover it.
-
-        Spend is only recorded once PayPal captures, so two checkouts that each fit the budget
-        could otherwise both start paying. Checkouts already mid-payment count as spent.
-        Runs without awaiting, so check-and-reserve is atomic on the event loop.
-        """
-        now = datetime.now(timezone.utc)
+        """Why the budget cannot cover this checkout once other mid-payment checkouts count."""
         agent_id = session.proposal.agent_id
         pending_total = 0.0
         pending_agent = 0.0
@@ -163,7 +158,21 @@ class TransactionCoordinator:
                     f"Exceeds agent '{quota.agent_name}' quota once pending checkouts are "
                     f"counted ({amount:.2f} > {max(quota_left, 0.0):.2f})."
                 )
+        return None
 
+    def _reserve_budget(
+        self, session: CheckoutSession, policy: AuthorizationPolicy
+    ) -> Optional[str]:
+        """Reserve this checkout's amount, or return why the budget cannot cover it.
+
+        Spend is only recorded once PayPal captures, so two checkouts that each fit the budget
+        could otherwise both start paying. Checkouts already mid-payment count as spent.
+        Runs without awaiting, so check-and-reserve is atomic on the event loop.
+        """
+        now = datetime.now(timezone.utc)
+        shortfall = self._budget_shortfall(session, policy, now)
+        if shortfall:
+            return shortfall
         session.state = TransactionState.PAYMENT_PENDING
         session.pending_since = now
         return None
@@ -850,6 +859,21 @@ class TransactionCoordinator:
                 )
                 return session
 
+            # The reservation taken when the order was created lapses after the TTL, so another
+            # checkout may have been admitted against the same budget while the popup stayed open.
+            # Take the hold again before moving money; the awaits below come after this check.
+            now = datetime.now(timezone.utc)
+            if (
+                session.pending_since is None
+                or now - session.pending_since > PENDING_RESERVATION_TTL
+            ):
+                shortfall = self._budget_shortfall(session, policy, now)
+                if shortfall:
+                    return self._block_for_budget(
+                        session, policy, f"Blocked at capture: {shortfall}"
+                    )
+            session.pending_since = now
+
             try:
                 capture_resp: PayPalOrderResponse = (
                     await self.paypal_client.capture_order(
@@ -926,15 +950,7 @@ class TransactionCoordinator:
         return self._sessions.get(checkout_id)
 
     def list_policy_checkouts(self, policy_id: str) -> List[Dict[str, Any]]:
-        """Summaries of every checkout opened under a policy, newest first.
-
-        The creation time comes from the checkout's POLICY_EVALUATED audit event, since the
-        session itself carries no timestamp.
-        """
-        created: Dict[str, str] = {}
-        for event in self.audit_ledger.get_events(event_type="POLICY_EVALUATED"):
-            if event.checkout_id and event.checkout_id not in created:
-                created[event.checkout_id] = event.timestamp.isoformat()
+        """Summaries of every checkout opened under a policy, newest first."""
         rows = []
         for session in reversed(list(self._sessions.values())):
             if session.policy_id != policy_id:
@@ -949,7 +965,7 @@ class TransactionCoordinator:
                     "items": [item.model_dump() for item in proposal.items],
                     "total_amount": proposal.total_amount,
                     "currency": proposal.currency,
-                    "created_at": created.get(session.checkout_id),
+                    "created_at": session.created_at.isoformat(),
                     "failure_reason": session.failure_reason,
                 }
             )
@@ -1084,6 +1100,14 @@ class TransactionCoordinator:
         outstanding = round(session.proposal.total_amount - session.refunded_total, 2)
         requested = self._refund_in_budget_currency(session, resource, default=outstanding)
         if requested is None:
+            # Never drop a refund silently: the audit trail should show one arrived and was not applied.
+            self.audit_ledger.record_event(
+                event_type="REFUND_IGNORED",
+                checkout_id=session.checkout_id,
+                policy_version=policy.version if policy else None,
+                reason="Refund amount or currency does not match the original charge, so no budget was credited.",
+                metadata={"amount": resource.get("amount")},
+            )
             return
         credit = min(requested, outstanding)
         if credit <= 0:

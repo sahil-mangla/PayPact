@@ -3,8 +3,7 @@
 > **PayPal AI Hackathon 2026 Submission**  
 > *Build What's Next with PayPal and AI*  
 > **Repository:** [github.com/sahil-mangla/PayPact](https://github.com/sahil-mangla/PayPact)  
-> **Demo video (YouTube, under 3 min):** **TODO: add the public YouTube link before submitting**  
-> **Hosted demo:** **TODO: add the deployed URL, or delete this line and rely on the run instructions in Section 4**  
+> **Demo video (YouTube, under 3 min):** [youtu.be/0PU0UouCmUg](https://youtu.be/0PU0UouCmUg)  
 > **License:** Apache 2.0  
 
 **In one sentence:** PayPact is a deterministic gate between an LLM shopping agent and PayPal Orders v2. The model only proposes; money moves only if the exact proposal the user approved still passes policy at the moment of capture.
@@ -192,11 +191,13 @@ The sandbox does not support INR, so INR amounts are converted to USD at a fixed
 | `GEMINI_API_KEY` | unset | Enables Gemini for intent parsing and for choosing the product through function calls. |
 | `GEMINI_DAILY_CALL_LIMIT` | `500` | Daily cap on Gemini calls; past it the app falls back to local or deterministic parsing. `0` disables the cap. |
 | `LLM_RATE_LIMIT_PER_MINUTE` | `30` | Per-client limit on the two endpoints that call an LLM. `0` disables it. |
-| `ENABLE_WEBHOOK_SIMULATION` | unset | `/api/webhooks/simulate` always works in mock mode; against live PayPal it is off unless this is `true`. |
+| `ENABLE_WEBHOOK_SIMULATION` | unset | `/api/webhooks/simulate` and the drift/timeout fault injection on `/api/checkouts/{id}/execute` always work in mock mode; against live PayPal they are off unless this is `true`. |
+| `TRUSTED_PROXY_HOPS` | `0` | Number of proxies in front of the app that append to `X-Forwarded-For`. The rate limiters use the entry that many hops from the right; `0` ignores the header and uses the socket address. `render.yaml` sets `1`. |
 | `INR_TO_USD_RATE` | `83` | INR per USD for the sandbox conversion. |
 | `CORS_ORIGINS` | localhost origins | Comma-separated allowed origins, or `*`. |
 | `FRONTEND_BASE_URL` | `http://localhost:3000` | Base URL of the web app, used to build one-time approval links (`<base>/approve/<token>`). Falls back to `FRONTEND_URL` when unset. |
 | `TOKEN_RATE_LIMIT_PER_MINUTE` | `60` | Per-client limit on the owner-token and approval-link endpoints. `0` disables it. |
+| `POLL_RATE_LIMIT_PER_MINUTE` | `240` | Per-client limit on the dashboard's checkout-list polling, kept apart from the approve/revoke limit above so open tabs cannot lock the owner out. `0` disables it. |
 | `NEXT_PUBLIC_API_URL` / `BACKEND_URL` | `http://localhost:8000` | Where the Next.js `/api` proxy sends requests. |
 | `BACKEND_INTERNAL_HOST` | unset | Last-resort backend address for the Next.js `/api` proxy, used only when neither `NEXT_PUBLIC_API_URL` nor `BACKEND_URL` is set. A bare name such as `paypact-backend` becomes `https://paypact-backend.onrender.com`. `render.yaml` fills it from the backend service. |
 
@@ -207,7 +208,7 @@ The agent only buys what the nine-item catalogue actually contains, so a request
 ### Test suites
 
 ```bash
-# Backend: 282 tests (policy, state machine, webhooks, API, owner approval, MCP, agent, crypto, benchmark)
+# Backend: 295 tests (policy, state machine, webhooks, API, owner approval, MCP, agent, crypto, benchmark)
 cd backend && source .venv/bin/activate && pytest -q
 
 # Frontend: 98 tests, plus lint, typecheck and a production build
@@ -385,13 +386,14 @@ The LLM only proposes. It never sees PayPal credentials and has no network path 
 
 - **Event:** PayPal AI Hackathon 2026 — *Build What's Next with PayPal and AI*
 - **Public Repository:** [github.com/sahil-mangla/PayPact](https://github.com/sahil-mangla/PayPact)
-- **Demo Walkthrough Video (target 2:45, hard limit 3:00):**
-  1. *0:00 - 0:20:* The problem: an agent can pay for something different from what the user approved.
-  2. *0:20 - 1:00:* Type a goal, show the parsed policy and a verified proposal, approve it, and pay in the PayPal sandbox popup (live mode) to a signed receipt.
-  2b. *Optional, about 20 s:* An outside agent connected over MCP proposes a purchase and its `pay` call is refused; the request appears in Agent requests, the owner opens the one-time approval link, approves, and `pay` then succeeds. A request to approve without the owner token is refused and shows in the Audit Trail.
-  3. *1:00 - 1:50:* Click the Stealth Shipping Drift and Rogue SKU Swap chips; each ends in a block before PayPal is called. Then the Prompt Injection chip, which is refused with a reason.
-  4. *1:50 - 2:20:* Audit Trail: hash-chained timeline, then drop in a receipt and use the tamper simulation to show the signature fail.
-  5. *2:20 - 2:45:* Policy Test Lab (described honestly as scripted regression scenarios), then the repository and the deployed app.
+- **Demo Walkthrough Video (under 3 minutes):** [youtu.be/0PU0UouCmUg](https://youtu.be/0PU0UouCmUg). It runs against the live PayPal sandbox and covers, in order:
+  1. The problem: an agent can pay for something different from what the user approved.
+  2. The gate: a versioned policy, a SHA-256 proposal fingerprint, and a re-check before the order is created and again at capture.
+  3. A live purchase: Gemini picks the item through tool calls, the policy engine decides, the buyer pays in the PayPal sandbox popup, and the order and capture IDs come from PayPal.
+  4. An outside agent over MCP: its `pay` call is refused until the owner approves with a one-time link, and only then does it receive the PayPal checkout link.
+  5. Three attacks, each blocked before PayPal is called: a hidden shipping fee, a swapped item, and a prompt injection.
+  6. The audit trail: a hash-chained ledger and a tampered receipt that fails verification.
+  7. The Policy Test Lab: seven scripted failure scenarios (the baselines are simplified reference designs written for the lab), then the repository.
 
 ---
 

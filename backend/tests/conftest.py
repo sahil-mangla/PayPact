@@ -38,10 +38,11 @@ def fresh_model_health_cache():
 def fresh_rate_limits():
     """Rate-limit and Gemini-cap counters are process-wide; isolate them per test."""
     from app.agent.gemini_client import GeminiClient
-    from app.api.ratelimit import llm_limiter, token_limiter
+    from app.api.ratelimit import llm_limiter, poll_limiter, token_limiter
 
     llm_limiter.reset()
     token_limiter.reset()
+    poll_limiter.reset()
     GeminiClient.reset_daily_budget()
     yield
 

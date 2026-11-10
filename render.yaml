@@ -8,9 +8,10 @@ services:
     rootDir: backend
     plan: free
     buildCommand: pip install --upgrade pip && pip install -r requirements.txt
-    # Behind Render's proxy the real client address is in X-Forwarded-For. Without trusting it,
-    # every visitor shares the proxy's address and therefore one rate-limit bucket.
-    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT --proxy-headers --forwarded-allow-ips='*'
+    # Behind Render's proxy every visitor shares the proxy's address, so the rate limiter reads the
+    # client from X-Forwarded-For itself (see TRUSTED_PROXY_HOPS). Trusting the header with
+    # --forwarded-allow-ips='*' would let callers spoof it and escape the limits.
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /api/health
     envVars:
       - key: PYTHON_VERSION
@@ -23,6 +24,10 @@ services:
         value: https://api-m.sandbox.paypal.com
       - key: CORS_ORIGINS
         value: "*"
+      # Proxies in front of the app that append to X-Forwarded-For. Check the header Render
+      # actually delivers before changing this; 0 ignores the header.
+      - key: TRUSTED_PROXY_HOPS
+        value: "1"
       - key: FRONTEND_URL
         value: https://paypact-frontend.onrender.com
       - key: PAYPAL_CLIENT_ID

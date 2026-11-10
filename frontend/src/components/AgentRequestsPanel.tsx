@@ -4,6 +4,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Bot, CheckCircle2, Copy } from 'lucide-react';
 
 import { approveCheckout, listPolicyCheckouts, PolicyCheckout } from '../lib/api';
+import { money } from '../lib/decision';
 import { formatTimestamp, humanizeEvent } from '../lib/format';
 import { ApprovalLinkButton } from './ApprovalLinkButton';
 
@@ -21,11 +22,6 @@ const visuallyHidden: React.CSSProperties = {
   whiteSpace: 'nowrap',
   border: 0,
 };
-
-function money(amount: number, currency: string): string {
-  const symbol = currency === 'USD' ? '$' : currency === 'INR' ? '₹' : `${currency} `;
-  return `${symbol}${amount.toLocaleString('en-US')}`;
-}
 
 function describeItems(row: PolicyCheckout): string {
   const first = row.items?.[0]?.name || 'Purchase';
