@@ -2029,8 +2029,8 @@ export default function Home() {
                     style={{ background: '#ffffff', border: '1px solid #cbd5e1', color: '#0f172a', borderRadius: '9999px', padding: '5px 12px', fontSize: '0.78rem' }}
                   >
                     <option value="PROPOSED_APIL">Proposed PayPact (With Policy Guard)</option>
-                    <option value="BASELINE_A">Baseline A (No Policy Gate)</option>
-                    <option value="BASELINE_B">Baseline B (Basic Static Limits)</option>
+                    <option value="BASELINE_A">Reference design A (scripted, no gate)</option>
+                    <option value="BASELINE_B">Reference design B (scripted, static limits)</option>
                   </select>
                   <motion.button
                     whileHover={{ scale: 1.02 }}
@@ -2199,8 +2199,8 @@ export default function Home() {
                     </thead>
                     <tbody>
                       {[
-                        { key: 'BASELINE_A', sys: 'Baseline A (No Policy Gate)', receipts: 'None', highlight: false },
-                        { key: 'BASELINE_B', sys: 'Baseline B (Static Limits Only)', receipts: 'Unsigned logs', highlight: false },
+                        { key: 'BASELINE_A', sys: 'Reference design A (scripted, no gate)', receipts: 'None', highlight: false },
+                        { key: 'BASELINE_B', sys: 'Reference design B (scripted, static limits)', receipts: 'Unsigned logs', highlight: false },
                         { key: 'PROPOSED_APIL', sys: 'PayPact', receipts: 'HMAC-signed receipts', highlight: true },
                       ].map(({ key, sys, receipts, highlight }) => {
                         // Figures come from the last real run; until one succeeds they stay blank.
@@ -2238,7 +2238,7 @@ export default function Home() {
                 <div>
                   <h3 style={{ fontSize: '1.05rem', fontWeight: 700, color: '#0f172a' }}>Audit Trail & Ledger</h3>
                   <p style={{ color: '#526077', fontSize: '0.78rem', marginTop: '1px' }}>
-                    Immutable sequence of every purchase event and policy verification
+                    Tamper-evident sequence of every purchase event and policy verification
                   </p>
                 </div>
                 <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
@@ -2468,7 +2468,7 @@ export default function Home() {
                           <span className="badge badge-allow" style={{ fontSize: '0.75rem', padding: '1px 6px' }}>Tamper Check Passed</span>
                         </div>
                         <p style={{ fontSize: '0.76rem', color: '#334155', margin: '0 0 8px' }}>
-                          The payload matches the immutable canonical SHA-256 digest. No fields have been altered since receipt generation.
+                          The payload matches the canonical SHA-256 digest. No fields have been altered since receipt generation.
                         </p>
                         <div className="cols2-sm" style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '8px', fontSize: '0.75rem', background: '#ffffff', padding: '8px 10px', borderRadius: '6px', border: '1px solid #d1fae5' }}>
                           <div>

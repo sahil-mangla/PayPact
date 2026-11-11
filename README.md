@@ -27,7 +27,7 @@ Autonomous AI purchasing agents can interpret natural language goals, select pro
 
 Between the moment an AI agent selects a product and the moment funds are captured via PayPal, transaction state frequently drifts:
 
-- **Price & Fee Drift:** An item proposed at $45 receives hidden fees, unexpected taxes, or an added $20 shipping surcharge at final checkout.
+- **Price & Fee Drift:** An item proposed at ₹3,899 receives hidden fees, unexpected taxes, or an added ₹850 shipping surcharge at final checkout.
 - **Product & Variant Substitution:** A seller or agent silently alters the SKU, product edition, or quantity.
 - **Revoked Authorization:** A human supervisor adjusts or revokes budget limits while an asynchronous agent task is in-flight.
 - **Multi-Agent Cross-Depletion:** Parallel sub-agents running concurrently overspend shared company budgets due to uncoordinated balances.
@@ -40,7 +40,7 @@ A valid LLM generation or technically formatted payment request is **not proof**
 **PayPact** introduces a deterministic, pre-execution verification layer between probabilistic AI agents and PayPal Orders v2 APIs:
 
 1. **Versioned User Policy:** Human-confirmed spending policies carry a version number, and a proposal prepared under an older version is rejected. The AI cannot change a policy; the server owns its spend and revocation state.
-2. **Hierarchical Swarm Quota Trees:** Multi-agent teams (`agent_hardware`, `agent_travel`, `agent_supplies`) receive isolated sub-quotas with each purchase counted against both the agent's quota and the master budget. Checkouts that are mid-payment hold their amount, so parallel checkouts cannot overspend.
+2. **Per-agent sub-quotas:** Multi-agent teams (`agent_hardware`, `agent_travel`, `agent_supplies`) receive isolated sub-quotas with each purchase counted against both the agent's quota and the master budget. Checkouts that are mid-payment hold their amount, so parallel checkouts cannot overspend.
 3. **Canonical Proposal Fingerprinting:** Every proposal is canonicalized and hashed using SHA-256 (binding exact SKU, merchant, line-items, taxes, and currency).
 4. **Deterministic Pre-Execution Invariant Gate:** The gate runs before the PayPal order is created and again immediately before capture. It validates live state against the policy version, budget ceiling, revocation and the approved fingerprint, and a capture whose amount differs from the approval is never recorded as paid.
 5. **HMAC-SHA256 Audit Receipts:** Every transaction, whether paid or blocked, exports a signed, tamper-evident receipt (`POST /api/receipt/verify`). HMAC is symmetric, so only the server that holds the signing secret can verify a receipt; this is tamper evidence, not third-party non-repudiation.
@@ -64,7 +64,7 @@ A valid LLM generation or technically formatted payment request is **not proof**
                  ┌───────────────────┴───────────────────┐
                  ▼                                       ▼
            AI Shopper Agent                    Confirmed Policy Record
-        (Zero Payment Authority)                (Immutable Version v1)
+        (Zero Payment Authority)                (Versioned Policy v1)
                  │                                       │
                  ▼                                       │
          Purchase Proposal                               │
@@ -104,7 +104,7 @@ The Integrity Lab replays 7 failure modes against three configurations. It is a 
 - **Baseline B (Static Gate):** a simplified design that checks policy once, when the proposal is generated, with no pre-execution validation.
 - **PayPact (APIL):** the real coordinator in this repository: lifecycle state machine, canonical SHA-256 fingerprinting, pre-execution invariant gate and idempotency locks.
 
-Baselines A and B are small hand-written stand-ins in [`backend/app/lab/benchmark.py`](backend/app/lab/benchmark.py), and the seven scenarios are the failure modes PayPact was designed for, so the 100% result shows the gate does what it was built to do, not that it beats other systems. All runs use the offline mock PayPal client, so the latency column measures the gate's own overhead and excludes any network time.
+Baseline rows are scripted outcomes, not measurements of real systems: Baselines A and B are small hand-written stand-ins in [`backend/app/lab/benchmark.py`](backend/app/lab/benchmark.py), and the seven scenarios are the failure modes PayPact was designed for, so the 100% result shows the gate does what it was built to do, not that it beats other systems. All runs use the offline mock PayPal client, so the latency column measures the gate's own overhead and excludes any network time.
 
 ### Quantitative Summary Table
 *(7 scenarios x 3 systems = 21 runs. Reproduce with `python3 scripts/run_eval.py`, which rewrites [`docs/BENCHMARK_RESULTS.json`](docs/BENCHMARK_RESULTS.json).)*
@@ -126,7 +126,7 @@ Baselines A and B are small hand-written stand-ins in [`backend/app/lab/benchmar
 | **SC-C** | Policy Drift | User revokes policy while agent task is in flight | **Failed (Unauthorized)** | **Failed (Stale policy)** | **Blocked (Revocation caught)** |
 | **SC-D** | Substitution | Merchant substitutes inferior switch SKU at same price | **Failed (Wrong item)** | **Failed (Price matched)** | **Blocked (Fingerprint mismatch)** |
 | **SC-E** | Concurrency | Duplicate double-click submission under network delay | **Failed (Double charge)** | Passed (Deduplicated) | **Passed (Single capture)** |
-| **SC-F** | Adversarial | Prompt injection in product description (₹14,500 item) | **Failed (Over budget)** | Passed (Budget limit) | **Blocked by Budget Gate** |
+| **SC-F** | Adversarial | Prompt injection in product description (₹14,500 item) | **Failed (Over budget)** | Passed (Budget limit) | **Blocked (Budget gate; in the live demo, no catalogue match)** |
 | **SC-G** | Network | Ambiguous network timeout during PayPal capture | **Failed (Blind retry)** | Passed (Reconciled) | **Safely Reconciled via API** |
 
 ---
@@ -208,7 +208,7 @@ The agent only buys what the nine-item catalogue actually contains, so a request
 ### Test suites
 
 ```bash
-# Backend: 295 tests (policy, state machine, webhooks, API, owner approval, MCP, agent, crypto, benchmark)
+# Backend: 297 tests (policy, state machine, webhooks, API, owner approval, MCP, agent, crypto, benchmark)
 cd backend && source .venv/bin/activate && pytest -q
 
 # Frontend: 98 tests, plus lint, typecheck and a production build
@@ -261,7 +261,7 @@ The application provides a clean fintech interface with floating pill navigation
 1. **Purchase Flow (Consumer & Adversarial Simulation View):**
    - Natural language search with automatic constraint parsing (`/authorizations/parse-intent`).
    - Multi-agent swarm team selection (`agent_hardware`, `agent_travel`, `agent_supplies`) with quota tracking.
-   - Streaming reasoning and product recommendations.
+   - Word-by-word display of the agent's reasoning and product recommendations.
    - 1-Click **Adversarial Attack Simulator Pills** to test defenses against:
      - Prompt Injection Bypass
      - Hard Budget Ceiling Breach (₹4,699 keyboard vs ₹3,000 ceiling)
@@ -276,7 +276,7 @@ The application provides a clean fintech interface with floating pill navigation
    - Full comparative evaluation matrix.
 
 3. **Audit Trail & Cryptographic Verifier (Audit & Dispute Defense View):**
-   - Hash-chained immutable event timeline verifying chronological ledger integrity.
+   - Hash-chained, tamper-evident event timeline verifying chronological ledger integrity.
    - **Interactive Drag-and-Drop Receipt Verifier**: Inspect `.json` receipt files to check validity.
    - **1-Click Tamper Simulation**:
      - *Verify Authentic Receipt*: Evaluates HMAC-SHA256 signature against canonical digest (100% match).
@@ -373,7 +373,7 @@ The LLM only proposes. It never sees PayPal credentials and has no network path 
 - **State is in memory.** Policies, checkouts and the audit ledger reset on a restart or a free-tier sleep. The ledger is hash-chained, but nothing anchors its head outside the process.
 - **Drift is simulated.** There is no real merchant feed. The attack chips inject price drift and SKU substitution at execute time to show the gate catching it.
 - **Approval needs the owner token or a one-time link, but there are no user accounts.** The owner token is a bearer secret held in the browser session, so anyone who gets it is the owner. Whoever registers a policy owns it: an agent with raw REST access could register a policy of its own and approve against that (the MCP surface has no policy tool, so an MCP agent cannot). Approval links are shown in the dashboard to be copied, not emailed or pushed anywhere. The `/mcp` endpoint has no authentication of its own, and the audit tab still lists the whole instance's events. Rate limits and a daily Gemini cap bound the cost. Real use would need authentication, per-user scoping and delivery of approval requests to the owner out of band.
-- **The model chooses what to propose, not what is allowed.** With `GEMINI_API_KEY` set, Gemini picks the product through function calls (`search_products`, `get_product`, `choose_product`). Its pick is accepted only if it is a SKU a tool returned and it satisfies the request and the agent's category; it is priced from the catalogue, and the deterministic policy gate then approves or blocks it. Without a key, or if Gemini fails or is overruled, a deterministic ranking picks instead. Intent parsing is still a single Gemini call with a regex fallback. This loop is tested against a scripted fake Gemini; it has not yet been run against the live API.
+- **The model chooses what to propose, not what is allowed.** With `GEMINI_API_KEY` set, Gemini picks the product through function calls (`search_products`, `get_product`, `choose_product`). Its pick is accepted only if it is a SKU a tool returned and it satisfies the request and the agent's category; it is priced from the catalogue, and the deterministic policy gate then approves or blocks it. Without a key, or if Gemini fails or is overruled, a deterministic ranking picks instead. Intent parsing is still a single Gemini call with a regex fallback. This loop is tested against a scripted fake Gemini and has been run against the live Gemini API, as shown in the demo video.
 - **A capture whose amount differs from the approval is flagged, not refunded.** The checkout is marked failed with a ledger entry and the capture id, and needs manual review in PayPal.
 - **Receipts use HMAC.** They are tamper-evident to the server that holds the key, not independently verifiable. Receipts do not carry a key ID, so rotating `APIL_SIGNING_SECRET` invalidates old ones.
 - **Small fixed catalogue.** Nine fixture products (including one adversarial listing) stand in for merchants.
